@@ -1,0 +1,24 @@
+- name: pancreatic_sbrt
+  keywords:
+    - 膵癌
+    - 膵臓癌
+    - pancreatic
+    - SBRT
+  open:
+    path: oncology/pancreas_sbrt.md
+
+- name: kakenhi
+  keywords:
+    - 科研費
+    - kakenhi
+    - grant
+  open:
+    path: grants/kakenhi_index.md
+
+- name: electricity
+  keywords:
+    - 電力
+    - 消費電力
+    - ワット
+  open:
+    path: electmeter/dashboard.md
