@@ -28,3 +28,4 @@ uvicorn app.main:app --host 127.0.0.1 --port 8787 --reload
 
 ## 改訂履歴
 - 2025-12-26: README 整理、改訂履歴追加。/assistant の挙動変更（plan.action 優先）を反映
+- 2025-12-26: Claude 検索機能強化 - ファイル名検索追加、インテント検出優先度調整、スマートキーワード抽出実装
