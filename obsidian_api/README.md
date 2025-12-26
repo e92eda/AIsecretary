@@ -1,30 +1,30 @@
-# AIsecretary - Obsidian Vault API (FastAPI)
-
 # AIsecretary – Obsidian Vault API
 
 Obsidian Vault を **外部（iOSショートカット・ブラウザ等）から操作するための FastAPI サーバー**。
 
-## できること
-- Vault 内 Markdown ファイルの一覧取得
-- Vault 全体の全文検索（grep）
-- ノート本文／特定セクションの取得
-- 曖昧なクエリから対象ノートを解決（辞書 + 推定）
-- Obsidian を開く `obsidian://open` URL の生成
-- `/assistant` エンドポイントで上記処理を統合的に実行
+## 概要
+- Vault 内ノートを検索・取得・解決・オープンするための API を提供
+- `/assistant` エンドポイントで複数機能を統合
+- 音声入力（Siri / ショートカット）からの利用を想定
 
-## 想定用途
-- iOS ショートカットから音声／テキスト指示でノートを開く
-- Obsidian を「秘書AI」的に操作するためのバックエンド
-- ローカルまたはVPS上での個人用APIサーバー
-
-## 技術構成
-- FastAPI + Uvicorn
-- Markdown / YAML Frontmatter 解析
+## 主な機能
+- Markdown ファイル一覧取得
+- 全文検索（grep）
+- ノート本文／特定セクション取得
+- 曖昧なクエリから対象ノートを解決
+- `obsidian://open` URL 生成
 - APIキーによる簡易認証
+
+## 位置づけ
+本プロジェクトは **「秘書AI（Siri × ChatGPT × Obsidian）」構築における実行レイヤー**を担う。
+（※ LLM / OpenAI による判断層は将来的に追加予定）
 
 ## 起動
 ```bash
 uvicorn app.main:app --host 127.0.0.1 --port 8787 --reload
+```
 
-Swagger UI:
-	•	http://127.0.0.1:8787/docs
+- Swagger UI: http://127.0.0.1:8787/docs
+
+## 改訂履歴
+- 2025-12-26: README 整理、改訂履歴追加。/assistant の挙動変更（plan.action 優先）を反映
