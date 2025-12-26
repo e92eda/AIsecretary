@@ -26,6 +26,35 @@ uvicorn app.main:app --host 127.0.0.1 --port 8787 --reload
 
 - Swagger UI: http://127.0.0.1:8787/docs
 
+## テスト
+
+### 依存関係のインストール
+```bash
+pip install -r requirements.txt
+```
+
+### テストの実行
+```bash
+# 全テストを実行
+python -m pytest test_api.py -v
+
+# 特定のテストクラスのみ実行
+python -m pytest test_api.py::TestFilesEndpoint -v
+
+# 詳細出力付きで実行
+python -m pytest test_api.py -v -s
+```
+
+### テスト内容
+- **ヘルスチェック**: `/health` エンドポイントの動作確認
+- **ファイル一覧**: `/files` でのMDファイル取得
+- **検索機能**: `/search` でのテキスト検索
+- **ノート取得**: `/note` での個別ノート・セクション取得
+- **クエリ解決**: `/resolve` での曖昧検索
+- **Obsidian連携**: `/open` でのURL生成
+- **アシスタント**: `/assistant` での統合機能
+- **認証テスト**: APIキー認証の検証
+
 ## 改訂履歴
 - 2025-12-26: README 整理、改訂履歴追加。/assistant の挙動変更（plan.action 優先）を反映
 - 2025-12-26: Claude 検索機能強化 - ファイル名検索追加、インテント検出優先度調整、スマートキーワード抽出実装
