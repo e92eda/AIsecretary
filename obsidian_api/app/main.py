@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from urllib.parse import quote
+from datetime import datetime
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
@@ -35,8 +36,24 @@ COMMANDS_FILE = Path(__file__).parent.parent / "commands.yml"
 
 
 @app.get("/health")
-def health():
-    return {"ok": True, "vault_root": str(VAULT_ROOT)}
+def health(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "status": "ok",
+        "service": "obsidian-api", 
+        "version": "0.3.0",
+        "time": datetime.now().astimezone().isoformat()
+    }
+
+@app.get("/obsidian-api/health")
+def obsidian_api_health(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "status": "ok",
+        "service": "obsidian-api",
+        "version": "0.3.0", 
+        "time": datetime.now().astimezone().isoformat()
+    }
 
 
 @app.get("/files", dependencies=[Depends(require_api_key)])
