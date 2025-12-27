@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,7 +39,7 @@ def health(response: Response):
     response.headers["Cache-Control"] = "no-store"
     return {
         "status": "ok",
-        "service": "obsidian-api", 
+        "service": "obsidian-api",
         "version": "0.3.0",
         "time": datetime.now().astimezone().isoformat()
     }
@@ -51,7 +50,7 @@ def obsidian_api_health(response: Response):
     return {
         "status": "ok",
         "service": "obsidian-api",
-        "version": "0.3.0", 
+        "version": "0.3.0",
         "time": datetime.now().astimezone().isoformat()
     }
 
@@ -110,16 +109,44 @@ def resolve_open_target(
     return r.model_dump()
 
 
-def obsidian_open_url(vault_name: str, open_path: str, heading: str | None = None) -> str:
-    # Obsidian URI uses file path without .md
-    if open_path.lower().endswith(".md"):
-        open_path = open_path[:-3]
-    file_enc = quote(open_path, safe="/")
+def obsidian_open_urls(vault_name: str, open_path: str, heading: str | None = None) -> dict[str, str]:
+    """Build Obsidian URIs.
+
+    Observed behavior differs by environment:
+    - Some resolve `file=` without `.md`
+    - Others require `.md`
+
+    To make debugging and Shortcuts logic easier, return both.
+    """
+    # Normalize path separators just in case
+    norm = open_path.replace("\\", "/")
+
+    # Build both variants
+    without_md = norm[:-3] if norm.lower().endswith(".md") else norm
+    with_md = norm if norm.lower().endswith(".md") else norm + ".md"
+
     vault_enc = quote(vault_name, safe="")
-    url = f"obsidian://open?vault={vault_enc}&file={file_enc}"
-    if heading:
-        url += "%23" + quote(heading, safe="")
-    return url
+
+    def _build(file_value: str) -> str:
+        file_enc = quote(file_value, safe="/")
+        url = f"obsidian://open?vault={vault_enc}&file={file_enc}"
+        if heading:
+            url += "%23" + quote(heading, safe="")
+        return url
+
+    return {
+        "without_md": _build(without_md),
+        "with_md": _build(with_md),
+    }
+
+
+def obsidian_open_url(vault_name: str, open_path: str, heading: str | None = None) -> str:
+    """Backward-compatible single URL.
+
+    Prefer the no-extension form (Obsidian wikilink-style), but callers that
+    need the `.md` form can use `obsidian_open_urls()`.
+    """
+    return obsidian_open_urls(vault_name, open_path, heading=heading)["without_md"]
 
 
 @app.get("/open", dependencies=[Depends(require_api_key)])
@@ -133,12 +160,13 @@ def open_for_shortcuts(
     if not r.found:
         return {"found": False, "obsidian_url": None, "reason": r.reason}
 
-    url = obsidian_open_url(vault, r.open_path, heading=heading)
+    urls = obsidian_open_urls(vault, r.open_path, heading=heading)
     return {
         "found": True,
         "source": r.source,
         "open_path": r.open_path,
-        "obsidian_url": url,
+        "obsidian_url": urls["without_md"],
+        "obsidian_urls": urls,
         "candidates": r.candidates,
     }
 
