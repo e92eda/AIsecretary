@@ -14,6 +14,8 @@ from .vault import safe_join, parse_frontmatter, extract_section, list_md_files
 from .search import grep_vault
 from .resolver import resolve_query
 from .assistant_logic import handle_assistant_query
+from .intent import IntentClassifier, Intent, IntentResult
+from .routing import RoutingPolicy, Action, ClarificationGenerator
 
 
 app = FastAPI(title="AIsecretary Obsidian Vault API", version="0.3.0")
@@ -37,17 +39,19 @@ COMMANDS_FILE = Path(__file__).parent.parent / "commands.yml"
 
 @dataclass(frozen=True)
 class AssistantOrchestrator:
-    """Thin orchestrator wrapper.
+    """Orchestrator that coordinates intent classification, routing, and execution.
 
-    For now this only unifies the entrypoint into a single class and delegates to
-    `handle_assistant_query()`.
-
-    Later we can move routing/policy/handlers into methods without changing the
-    FastAPI endpoint contract.
+    Phase 1 implementation with:
+    - Intent classification with confidence scores
+    - Routing policy for fallback and clarification
+    - Delegation to existing execution logic
     """
 
     vault_root: Path
     commands_file: Path
+    intent_classifier: IntentClassifier = IntentClassifier()
+    routing_policy: RoutingPolicy = RoutingPolicy()
+    clarification_generator: ClarificationGenerator = ClarificationGenerator()
 
     def run(
         self,
@@ -58,8 +62,78 @@ class AssistantOrchestrator:
         heading: str | None = None,
         section: str | None = None,
     ):
+        """Main orchestration entry point."""
+        
+        # Step 1: Classify intent with confidence
+        intent_result = self.intent_classifier.classify(query)
+        
+        # Step 2: Determine routing decision
+        routing_decision = self.routing_policy.decide(intent_result)
+        
+        # Step 3: Handle based on routing decision
+        if routing_decision.action == Action.CLARIFY:
+            clarification = self.clarification_generator.generate_clarification(intent_result)
+            return {
+                "action": "clarify",
+                "success": False,
+                "intent": intent_result.intent.value,
+                "confidence": intent_result.confidence,
+                "clarification": clarification,
+                "user_message": clarification["question"]
+            }
+        
+        # Step 4: Execute the intent (with potential fallback)
+        try:
+            result = self._execute_intent(
+                intent_result=intent_result,
+                vault_name=vault_name,
+                prefer=prefer,
+                heading=heading,
+                section=section
+            )
+            
+            # Check if execution was successful
+            if result.get("ok", False) or result.get("found", False):
+                return self._format_success_response(result, intent_result, routing_decision)
+            
+            # Attempt fallback if available
+            if routing_decision.fallback_intent:
+                fallback_result = self._try_fallback(
+                    original_intent=intent_result.intent,
+                    fallback_intent=routing_decision.fallback_intent,
+                    query=query,
+                    vault_name=vault_name,
+                    prefer=prefer,
+                    heading=heading,
+                    section=section
+                )
+                
+                if fallback_result:
+                    return self._format_fallback_response(fallback_result, intent_result, routing_decision)
+            
+            # Fallback failed or not available
+            return self._format_failure_response(result, intent_result, routing_decision)
+            
+        except Exception as e:
+            return {
+                "action": "error",
+                "success": False,
+                "intent": intent_result.intent.value,
+                "error": str(e),
+                "user_message": "処理中にエラーが発生しました"
+            }
+
+    def _execute_intent(
+        self,
+        intent_result,
+        vault_name: str,
+        prefer: str = "most_hits",
+        heading: str | None = None,
+        section: str | None = None,
+    ):
+        """Execute intent using existing assistant logic."""
         return handle_assistant_query(
-            query=query,
+            query=intent_result.entities["query"],
             vault_name=vault_name,
             vault_root=self.vault_root,
             commands_file=self.commands_file,
@@ -68,6 +142,105 @@ class AssistantOrchestrator:
             heading=heading,
             section=section,
         )
+    
+    def _try_fallback(
+        self,
+        original_intent: Intent,
+        fallback_intent: Intent,
+        query: str,
+        vault_name: str,
+        prefer: str = "most_hits",
+        heading: str | None = None,
+        section: str | None = None,
+    ):
+        """Try executing fallback intent."""
+        try:
+            # Create a fallback intent result
+            fallback_entities = {"query": query, "note": None, "section": None, "vault": None}
+            fallback_result_obj = IntentResult(
+                intent=fallback_intent,
+                confidence=0.8,  # High confidence for fallback
+                entities=fallback_entities
+            )
+            
+            return self._execute_intent(
+                intent_result=fallback_result_obj,
+                vault_name=vault_name,
+                prefer=prefer,
+                heading=heading,
+                section=section
+            )
+        except Exception:
+            return None
+    
+    def _format_success_response(self, result, intent_result, routing_decision):
+        """Format successful execution response."""
+        action_name = self._intent_to_action_name(intent_result.intent)
+        
+        response = {
+            "action": action_name,
+            "success": True,
+            "intent": intent_result.intent.value,
+            "confidence": intent_result.confidence,
+            "routing_reason": routing_decision.reason,
+            **result
+        }
+        
+        # Add user-friendly message
+        if "obsidian_url" in result:
+            response["user_message"] = "ノートを開きました"
+        elif "hits" in result:
+            response["user_message"] = f"{len(result['hits'])}件の検索結果を見つけました"
+        elif "text" in result:
+            response["user_message"] = "ノート内容を取得しました"
+        elif "tables" in result:
+            response["user_message"] = f"{result.get('count', 0)}個のテーブルを見つけました"
+        else:
+            response["user_message"] = "処理が完了しました"
+            
+        return response
+    
+    def _format_fallback_response(self, result, intent_result, routing_decision):
+        """Format fallback execution response."""
+        action_name = self._intent_to_action_name(routing_decision.fallback_intent)
+        
+        response = {
+            "action": action_name,
+            "success": True,
+            "intent": intent_result.intent.value,
+            "fallback_intent": routing_decision.fallback_intent.value,
+            "confidence": intent_result.confidence,
+            "routing_reason": "Fallback executed after original intent failed",
+            **result
+        }
+        
+        response["user_message"] = f"元の操作に失敗したため、{action_name}を実行しました"
+        return response
+    
+    def _format_failure_response(self, result, intent_result, routing_decision):
+        """Format failure response."""
+        return {
+            "action": "failed",
+            "success": False,
+            "intent": intent_result.intent.value,
+            "confidence": intent_result.confidence,
+            "routing_reason": routing_decision.reason,
+            "reason": result.get("reason", "Unknown error"),
+            "user_message": "申し訳ありませんが、処理できませんでした"
+        }
+    
+    def _intent_to_action_name(self, intent: Intent) -> str:
+        """Convert intent to action name for response."""
+        mapping = {
+            Intent.OPEN: "open",
+            Intent.SEARCH: "search", 
+            Intent.READ: "read",
+            Intent.SUMMARIZE: "summarize",
+            Intent.TABLE: "table",
+            Intent.COMMENT: "comment",
+            Intent.UPDATE: "update"
+        }
+        return mapping.get(intent, "unknown")
 
 
 ASSISTANT = AssistantOrchestrator(vault_root=VAULT_ROOT, commands_file=COMMANDS_FILE)

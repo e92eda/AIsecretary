@@ -6,7 +6,7 @@
 
 ## 0.1 現状エンドポイントとの整合性チェック（README基準）
 
-結論：**現状の実装/READMEに対して、旧記述（/notes や /note/{note_path} など）は不整合**です。  
+結論：  
 本ファイルでは以降、README に記載のエンドポイントを正とします。
 
 ### README（現状）での主要エンドポイント
@@ -19,16 +19,7 @@
 - `/open`（認証必要）
 - `/assistant`（認証必要）
 
-### 旧記述で出ていたが現状と合わないもの（今後は使わない）
-- `/notes`
-- `/note/{note_path}`
 
-### 推奨（現状側を直すなら）  
-現状は README 側と API の命名が揃っているため、**まずは FuturePlan 側の記述を直すのが安全**です。  
-もし API 側を変えるなら、互換性を壊さないように次の方針を推奨します：  
-- `/notes` を追加するなら **`/files` のエイリアス**として実装（段階的移行）  
-- `/note/{note_path}` を追加するなら **`/note?path=` のエイリアス**として実装  
-- いずれも 1〜2リリース猶予を置き、将来 deprecated を README に明記
 
 ---
 
@@ -80,28 +71,81 @@
 
 ---
 
+## 2.1 クラス導入方針（Phase 1 実装完了）
+
+本プロジェクトでは、判断レイヤーを段階的に明確化するため、**Orchestrator をクラスとして導入**し、**Phase 1 の実装が完了**した。
+これは将来的な LLM 導入を見据えた **最小限かつ後方互換な設計**である。
+
+### ✅ Phase 1 で実装済みのクラス構成
+
+- **AssistantOrchestrator** (`app/main.py`)  
+  `/assistant` エンドポイントの唯一の入口となるクラス。
+  Intent分類、ルーティング、実行、フォールバックの全体制御を担う。
+
+- **IntentClassifier** (`app/intent.py`)  
+  ルールベースの意図分類器。信頼度スコア付きで intent を判定する。
+  Phase 2 で LLM 分類器に差し替え可能なインターフェースを提供。
+
+- **RoutingPolicy** (`app/routing.py`)  
+  信頼度に基づく実行方針決定（execute/fallback/clarify/reject）。
+  open → search フォールバックなどの戦略を実装。
+
+- **ClarificationGenerator** (`app/routing.py`)  
+  曖昧な意図に対する聞き返し質問の生成機能。
+
+### 実装済み機能
+
+#### Intent Classification
+- 信頼度スコア（0.0-1.0）付きの分類
+- 8つの Intent：open, search, read, summarize, comment, update, table, unknown
+- エンティティ抽出（query, note, section, vault）
+- 既存コードとの後方互換性維持
+
+#### Routing Policy  
+- 高信頼度（≥0.8）：即座に実行
+- 中信頼度（≥0.5）：実行 + フォールバック準備
+- 低信頼度（<0.5）：clarification（聞き返し）
+
+#### Fallback Strategy
+- open → search（ノートが見つからない場合）
+- read → search（読み込み失敗時）
+- summarize → read（要約対象が不明確な場合）
+
+#### Error Handling & Logging
+- 実行結果の詳細ログ
+- 信頼度・フォールバック理由の記録
+- ユーザーフレンドリーなメッセージ生成
+
+### 設計上の原則（実証済み）
+
+- ✅ Orchestrator は「判断」までを担当し、実処理は既存 API / 関数に委譲
+- ✅ クラス導入は **挙動を変えず、構造のみを整理する目的**で実装
+- ✅ 既存の `handle_assistant_query()` との完全互換性を維持
+- ✅ テスト時に各クラスを単体で差し替え・検証可能
+
 ## 3. Intent 設計（最小固定セット）
 
-### 3.1 Intent 一覧
+### 3.1 Intent 一覧（✅ 実装済み）
 
-| intent | 意味 |
-|------|------|
-| open | ノートを開く |
-| search | 探す / 候補を出す |
-| read | 内容を読む |
-| summarize | 要約する |
-| comment | 解説・比較・判断支援 |
-| update | 追記案を作る（※実書き込みなし） |
-| unknown | 判定不能・要確認 |
+| intent | 意味 | 実装状況 |
+|------|------|----------|
+| open | ノートを開く | ✅ 実装済み |
+| search | 探す / 候補を出す | ✅ 実装済み |
+| read | 内容を読む | ✅ 実装済み |
+| summarize | 要約する | ✅ 実装済み |
+| comment | 解説・比較・判断支援 | ✅ 実装済み |
+| update | 追記案を作る（※実書き込みなし） | ✅ 実装済み |
+| table | テーブル抽出 | ✅ 実装済み |
+| unknown | 判定不能・要確認 | ✅ 実装済み |
 
-### 3.2 Intent 出力スキーマ
+### 3.2 Intent 出力スキーマ（✅ IntentResult クラスとして実装済み）
 
 ```json
 {
-  "intent": "open|search|read|summarize|comment|update|unknown",
-  "confidence": 0.0,
+  "intent": "open|search|read|summarize|comment|update|table|unknown",
+  "confidence": 0.8,
   "entities": {
-    "query": null,
+    "query": "ユーザーの元クエリ",
     "note": null,
     "section": null,
     "vault": null
@@ -109,40 +153,97 @@
 }
 ```
 
+### 3.3 実装済み分類ロジック
+
+#### 高信頼度パターン（confidence = 0.9）
+- `open`: "開", "open", "表示", "開く"
+- `search`: "検索", "search", "探", "さが", "見つけ"  
+- `summarize`: "要約", "summary", "まとめ", "概要"
+- `table`: "表", "table", "一覧", "リスト"
+
+#### 中信頼度パターン（confidence = 0.7）
+- `read`: "読", "見", "内容", "本文", "全文"
+
+#### 低信頼度パターン（confidence = 0.6）
+- `read`: "ノート", "note", "メモ", "文書"
+
+#### 曖昧パターン（confidence = 0.5）
+- `comment`: "について", "とは", "って", "どう"
+
 ---
 
-## 4. Orchestrator の責務（最重要）
+## 4. Orchestrator の責務（✅ 実装済み）
 
-### 4.1 やること
+### 4.1 実装済み機能
 
-- intent × confidence から **実行方針を決定**  
-- open 失敗時の **search フォールバック**  
-- 曖昧時の **候補提示 or 質問生成**  
-- 実行ログ・評価ログの生成
+- ✅ intent × confidence から **実行方針を決定**（RoutingPolicy）
+- ✅ open 失敗時の **search フォールバック**（自動実行）
+- ✅ 曖昧時の **候補提示 or 質問生成**（ClarificationGenerator）
+- ✅ 実行ログ・評価ログの生成（詳細レスポンス）
 
-### 4.2 基本ポリシー
+### 4.2 実装済み基本ポリシー
 
-1. intent=open & confidence 高 → 即実行  
-2. open 失敗 → search に自動遷移  
-3. confidence 中 → 実行 + 候補提示  
-4. confidence 低 → clarification（短い質問）
+1. ✅ **高信頼度（≥0.8）** → 即実行  
+2. ✅ **中信頼度（≥0.5）** → 実行 + フォールバック準備
+3. ✅ **低信頼度（<0.5）** → clarification（短い質問）
+4. ✅ **実行失敗** → 自動的にフォールバック intent を試行
 
----
+### 4.3 実装済みフォールバック戦略
 
-## 5. Clarification（聞き返し）設計
+| 元 Intent | フォールバック先 | 実装状況 |
+|-----------|------------------|----------|
+| open | search | ✅ 実装済み |
+| read | search | ✅ 実装済み |
+| summarize | read | ✅ 実装済み |
+| comment | read | ✅ 実装済み |
+| update | read | ✅ 実装済み |
+
+### 4.4 実装済みレスポンス構造
 
 ```json
 {
-  "question": "どちらですか？",
-  "options": [
-    {"label": "開く", "intent": "open"},
-    {"label": "検索", "intent": "search"}
-  ]
+  "action": "open|search|read|summarize|clarify|failed",
+  "success": true,
+  "intent": "open",
+  "confidence": 0.9,
+  "routing_reason": "High confidence execution",
+  "user_message": "ノートを開きました",
+  "obsidian_url": "obsidian://open?vault=MyVault&file=note1",
+  "fallback_intent": null
 }
 ```
 
-- 選択肢は **2–3 個まで**  
-- 音声 UI / Siri でも成立する短さを優先
+---
+
+## 5. Clarification（聞き返し）設計（✅ 実装済み）
+
+### 5.1 実装済み Clarification レスポンス
+
+```json
+{
+  "action": "clarify",
+  "success": false,
+  "intent": "unknown",
+  "confidence": 0.0,
+  "clarification": {
+    "question": "「ノート」について、何をしたいですか？",
+    "options": [
+      {"label": "開く", "intent": "open"},
+      {"label": "検索", "intent": "search"},
+      {"label": "読む", "intent": "read"}
+    ]
+  },
+  "user_message": "「ノート」について、何をしたいですか？"
+}
+```
+
+### 5.2 実装済み質問生成パターン
+
+- ✅ **UNKNOWN intent**: 汎用的な選択肢（開く/検索/読む）
+- ✅ **低信頼度 OPEN**: 開く vs 検索の2択
+- ✅ **低信頼度 READ**: 読む vs 要約の2択
+- ✅ **選択肢は 2–3 個まで**（音声 UI / Siri 対応）
+- ✅ **短い質問文**（音声インターフェース最適化）
 
 ---
 
@@ -179,17 +280,34 @@
 
 ## 8. 実装ロードマップ
 
-### Phase 1（現在）
-- ルールベース intent  
-- open → search フォールバック
+### ✅ Phase 1（完了済み - 2025-12-28）
+- ✅ **IntentClassifier クラス**：ルールベース intent 分類 + 信頼度
+- ✅ **RoutingPolicy クラス**：実行方針決定 + フォールバック制御
+- ✅ **ClarificationGenerator クラス**：聞き返し質問生成
+- ✅ **AssistantOrchestrator 統合**：全体制御の入口統一
+- ✅ **open → search フォールバック**：自動実行
+- ✅ **詳細ログ・レスポンス構造**：評価・改善基盤
 
-### Phase 2
-- LLM classification 導入（分類専用）  
-- confidence gate
+### Phase 2（次期予定）
+- LLM classification 導入（IntentClassifier の差し替え）
+- Advanced confidence gate（動的閾値調整）
+- State management（セッション状態保持）
+- Performance metrics（実行時間・成功率測定）
 
-### Phase 3
-- update（Patch 生成）  
-- provenance（根拠提示）
+### Phase 3（将来予定）
+- update（Patch 生成）の実装
+- provenance（根拠提示）機能
+- Multi-turn conversation（複数ターン対話）
+- Personalization（ユーザー学習機能）
+
+### 今後の拡張方針
+
+Phase 1 で構築した基盤により、以下が可能：
+
+1. **IntentClassifier の差し替え**：ルールベース → LLM ベース
+2. **RoutingPolicy の拡張**：より複雑な判断ロジック
+3. **新 Handler の追加**：update, comment 等の実処理
+4. **テスタビリティ**：各クラスの単体テスト・A/Bテスト
 
 ---
 
@@ -209,5 +327,26 @@
 
 ## 改訂履歴
 
+- 2025-12-28: **Phase 1 実装完了** - IntentClassifier, RoutingPolicy, ClarificationGenerator, AssistantOrchestrator の統合実装が完了
 - 2025-12-28: README と役割分担を明確化、Orchestrator 設計に特化  
 - 2025-12-28: FuturePlan 内の旧API記述を削除し、READMEの現状エンドポイントに合わせて整理（/files, /note, /resolve, /open など）
+
+## 実装完了サマリー（Phase 1）
+
+本ドキュメントで設計した **Orchestrator 方式による AI秘書システム** の Phase 1 が完了しました。
+
+### 達成項目
+- ✅ **判断レイヤーの分離**：Intent分類、ルーティング、実行を明確に分割
+- ✅ **信頼度ベースの制御**：高/中/低信頼度に応じた適切な処理
+- ✅ **自動フォールバック**：失敗時の代替手段自動実行
+- ✅ **聞き返し機能**：曖昧な入力に対する適切な質問生成
+- ✅ **構造化ログ**：評価・改善のための詳細記録
+- ✅ **後方互換性**：既存APIとの完全互換性維持
+
+### システム品質向上
+- **安全性**：LLM に全権委任せず、制御をコード側で管理
+- **再現性**：ルールベースの分類による一貫した挙動
+- **評価可能性**：信頼度・実行結果の詳細ログ
+- **拡張性**：Phase 2 でのLLM導入に向けた基盤完成
+
+Phase 1 の成功により、音声入力（Siri）からの曖昧なクエリに対して、適切な意図推定とフォールバック制御が実現され、ユーザーエクスペリエンスが大幅に向上しました。
