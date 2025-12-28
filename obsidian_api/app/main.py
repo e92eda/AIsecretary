@@ -16,6 +16,8 @@ from .resolver import resolve_query
 from .assistant_logic import handle_assistant_query
 from .intent import IntentClassifier, Intent, IntentResult
 from .routing import RoutingPolicy, Action, ClarificationGenerator
+from .classifier_factory import create_classifier, ClassifierType
+from .logging_utils import setup_orchestrator_logger, log_execution, create_session_id
 
 
 app = FastAPI(title="AIsecretary Obsidian Vault API", version="0.3.0")
@@ -41,17 +43,23 @@ COMMANDS_FILE = Path(__file__).parent.parent / "commands.yml"
 class AssistantOrchestrator:
     """Orchestrator that coordinates intent classification, routing, and execution.
 
-    Phase 1 implementation with:
-    - Intent classification with confidence scores
+    Phase 2 implementation with:
+    - LLM-based intent classification (with rule-based fallback)
+    - A/B testing support
+    - Comprehensive logging and metrics
     - Routing policy for fallback and clarification
     - Delegation to existing execution logic
     """
 
     vault_root: Path
     commands_file: Path
-    intent_classifier: IntentClassifier = IntentClassifier()
     routing_policy: RoutingPolicy = RoutingPolicy()
     clarification_generator: ClarificationGenerator = ClarificationGenerator()
+    
+    def __post_init__(self):
+        # Create unified classifier and logger based on configuration
+        object.__setattr__(self, 'classifier', create_classifier())
+        object.__setattr__(self, 'logger', setup_orchestrator_logger())
 
     def run(
         self,
@@ -62,28 +70,42 @@ class AssistantOrchestrator:
         heading: str | None = None,
         section: str | None = None,
     ):
-        """Main orchestration entry point."""
+        """Main orchestration entry point with simple logging."""
         
-        # Step 1: Classify intent with confidence
-        intent_result = self.intent_classifier.classify(query)
+        session_id = create_session_id()
+        import time
+        start_time = time.time()
         
-        # Step 2: Determine routing decision
-        routing_decision = self.routing_policy.decide(intent_result)
-        
-        # Step 3: Handle based on routing decision
-        if routing_decision.action == Action.CLARIFY:
-            clarification = self.clarification_generator.generate_clarification(intent_result)
-            return {
-                "action": "clarify",
-                "success": False,
-                "intent": intent_result.intent.value,
-                "confidence": intent_result.confidence,
-                "clarification": clarification,
-                "user_message": clarification["question"]
-            }
-        
-        # Step 4: Execute the intent (with potential fallback)
         try:
+            # Step 1: Classify intent
+            intent_result, classification_metrics = self.classifier.classify(query)
+            
+            # Step 2: Determine routing decision
+            routing_decision = self.routing_policy.decide(intent_result)
+            
+            # Step 3: Handle based on routing decision
+            if routing_decision.action == Action.CLARIFY:
+                clarification = self.clarification_generator.generate_clarification(intent_result)
+                
+                duration_ms = (time.time() - start_time) * 1000
+                log_execution(
+                    self.logger, session_id, query, intent_result.intent.value,
+                    intent_result.confidence, classification_metrics.model_used,
+                    False, duration_ms, "clarify"
+                )
+                
+                return {
+                    "action": "clarify",
+                    "success": False,
+                    "intent": intent_result.intent.value,
+                    "confidence": intent_result.confidence,
+                    "clarification": clarification,
+                    "user_message": clarification["question"],
+                    "session_id": session_id,
+                    "duration_ms": duration_ms
+                }
+            
+            # Step 4: Execute the intent
             result = self._execute_intent(
                 intent_result=intent_result,
                 vault_name=vault_name,
@@ -92,11 +114,22 @@ class AssistantOrchestrator:
                 section=section
             )
             
-            # Check if execution was successful
+            # Check execution success
             if result.get("ok", False) or result.get("found", False):
-                return self._format_success_response(result, intent_result, routing_decision)
+                response = self._format_success_response(result, intent_result, routing_decision)
+                
+                duration_ms = (time.time() - start_time) * 1000
+                log_execution(
+                    self.logger, session_id, query, intent_result.intent.value,
+                    intent_result.confidence, classification_metrics.model_used,
+                    True, duration_ms, response.get("action", "unknown")
+                )
+                
+                response["session_id"] = session_id
+                response["duration_ms"] = duration_ms
+                return response
             
-            # Attempt fallback if available
+            # Try fallback if available
             if routing_decision.fallback_intent:
                 fallback_result = self._try_fallback(
                     original_intent=intent_result.intent,
@@ -108,19 +141,50 @@ class AssistantOrchestrator:
                     section=section
                 )
                 
-                if fallback_result:
-                    return self._format_fallback_response(fallback_result, intent_result, routing_decision)
+                if fallback_result and (fallback_result.get("ok", False) or fallback_result.get("found", False)):
+                    response = self._format_fallback_response(fallback_result, intent_result, routing_decision)
+                    
+                    duration_ms = (time.time() - start_time) * 1000
+                    log_execution(
+                        self.logger, session_id, query, intent_result.intent.value,
+                        intent_result.confidence, classification_metrics.model_used,
+                        True, duration_ms, "fallback_" + response.get("action", "unknown")
+                    )
+                    
+                    response["session_id"] = session_id
+                    response["duration_ms"] = duration_ms
+                    return response
             
-            # Fallback failed or not available
-            return self._format_failure_response(result, intent_result, routing_decision)
+            # Execution failed
+            response = self._format_failure_response(result, intent_result, routing_decision)
+            
+            duration_ms = (time.time() - start_time) * 1000
+            log_execution(
+                self.logger, session_id, query, intent_result.intent.value,
+                intent_result.confidence, classification_metrics.model_used,
+                False, duration_ms, "failed", result.get("reason", "Unknown error")
+            )
+            
+            response["session_id"] = session_id
+            response["duration_ms"] = duration_ms
+            return response
             
         except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            
+            log_execution(
+                self.logger, session_id, query, "unknown", 0.0, "unknown",
+                False, duration_ms, "error", str(e)
+            )
+            
             return {
                 "action": "error",
                 "success": False,
-                "intent": intent_result.intent.value,
+                "intent": "unknown",
                 "error": str(e),
-                "user_message": "処理中にエラーが発生しました"
+                "user_message": "処理中にエラーが発生しました",
+                "session_id": session_id,
+                "duration_ms": duration_ms
             }
 
     def _execute_intent(

@@ -35,6 +35,7 @@ class IntentClassifier:
         t = (text or "").lower().strip()
         
         if not t:
+
             return IntentResult(
                 intent=Intent.UNKNOWN,
                 confidence=0.0,
