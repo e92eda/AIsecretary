@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import quote
 from datetime import datetime
+from dataclasses import dataclass
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,44 @@ app.add_middleware(
 
 VAULT_ROOT = Path(settings.vault_root)
 COMMANDS_FILE = Path(__file__).parent.parent / "commands.yml"
+
+
+@dataclass(frozen=True)
+class AssistantOrchestrator:
+    """Thin orchestrator wrapper.
+
+    For now this only unifies the entrypoint into a single class and delegates to
+    `handle_assistant_query()`.
+
+    Later we can move routing/policy/handlers into methods without changing the
+    FastAPI endpoint contract.
+    """
+
+    vault_root: Path
+    commands_file: Path
+
+    def run(
+        self,
+        *,
+        query: str,
+        vault_name: str,
+        prefer: str = "most_hits",
+        heading: str | None = None,
+        section: str | None = None,
+    ):
+        return handle_assistant_query(
+            query=query,
+            vault_name=vault_name,
+            vault_root=self.vault_root,
+            commands_file=self.commands_file,
+            obsidian_open_url_func=obsidian_open_url,
+            prefer=prefer,
+            heading=heading,
+            section=section,
+        )
+
+
+ASSISTANT = AssistantOrchestrator(vault_root=VAULT_ROOT, commands_file=COMMANDS_FILE)
 
 
 @app.get("/health")
@@ -179,12 +218,9 @@ def assistant(
     heading: str | None = Query(default=None),
     section: str | None = Query(default=None),
 ):
-    return handle_assistant_query(
+    return ASSISTANT.run(
         query=q,
         vault_name=vault,
-        vault_root=VAULT_ROOT,
-        commands_file=COMMANDS_FILE,
-        obsidian_open_url_func=obsidian_open_url,
         prefer=prefer,
         heading=heading,
         section=section,

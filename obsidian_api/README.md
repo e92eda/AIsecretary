@@ -17,7 +17,9 @@ Obsidian Vault を **外部（iOSショートカット・ブラウザ等）か�
 
 ## 位置づけ
 本プロジェクトは **「秘書AI（Siri × ChatGPT × Obsidian）」構築における実行レイヤー**を担う。
-（※ LLM / OpenAI による判断層は将来的に追加予定）
+現在は `/assistant` エンドポイント内部に **Orchestrator（判断レイヤーの最小実装）** を持ち、
+intent 判定・フォールバック・統合実行の入口を 1 箇所に集約している。
+（※ LLM / OpenAI による高度な判断層は段階的に追加予定）
 
 ## 起動
 ```bash
@@ -193,9 +195,10 @@ Obsidianで開くためのURI生成（iOSショートカット向け）
   - `section` (optional): セクション指定
 
 #### 機能
-- インテント検出（検索、読み込み、要約、テーブル抽出等）
-- 自動的なアクション実行
-- LLMプランナー（OpenAI API使用時）によるクエリ解析
+- Orchestrator による intent 判定（open / search / read / summarize 等）
+- open 失敗時の search フォールバックなどの統合制御
+- 既存 API（/open, /search, /note 等）を組み合わせた自動実行
+- （将来）LLM 分類器・プランナーの段階的導入
 
 #### レスポンス例
 ```json
@@ -240,6 +243,7 @@ curl -sS http://127.0.0.1:8787/obsidian-api/health
 - nginx の location 設定で `/obsidian-api/` 配下のパス競合に注意
 
 ## 改訂履歴
+- 2025-12-28: /assistant に Orchestrator クラスを導入し、判断レイヤーの入口を 1 箇所に集約
 - 2025-12-26: Add /obsidian-api/health spec
 - 2025-12-26: README 整理、改訂履歴追加。/assistant の挙動変更（plan.action 優先）を反映
 - 2025-12-26: Claude 検索機能強化 - ファイル名検索追加、インテント検出優先度調整、スマートキーワード抽出実装
