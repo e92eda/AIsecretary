@@ -91,7 +91,14 @@ class AssistantOrchestrator:
                 log_execution(
                     self.logger, session_id, query, intent_result.intent.value,
                     intent_result.confidence, classification_metrics.model_used,
-                    False, duration_ms, "clarify"
+                    False, duration_ms, "clarify", 
+                    result_summary=f"asking: {clarification['question'][:50]}...",
+                    routing_info=f"action={routing_decision.action.value}, reason={routing_decision.reason}",
+                    response_data={
+                        "action": "clarify",
+                        "user_message": clarification["question"],
+                        "options_count": len(clarification.get("options", []))
+                    }
                 )
                 
                 return {
@@ -119,10 +126,14 @@ class AssistantOrchestrator:
                 response = self._format_success_response(result, intent_result, routing_decision)
                 
                 duration_ms = (time.time() - start_time) * 1000
+                result_summary = self._create_result_summary(result, response)
                 log_execution(
                     self.logger, session_id, query, intent_result.intent.value,
                     intent_result.confidence, classification_metrics.model_used,
-                    True, duration_ms, response.get("action", "unknown")
+                    True, duration_ms, response.get("action", "unknown"),
+                    result_summary=result_summary,
+                    routing_info=f"action={routing_decision.action.value}, confidence_gate=passed",
+                    response_data=response
                 )
                 
                 response["session_id"] = session_id
@@ -145,10 +156,15 @@ class AssistantOrchestrator:
                     response = self._format_fallback_response(fallback_result, intent_result, routing_decision)
                     
                     duration_ms = (time.time() - start_time) * 1000
+                    result_summary = self._create_result_summary(fallback_result, response)
                     log_execution(
                         self.logger, session_id, query, intent_result.intent.value,
                         intent_result.confidence, classification_metrics.model_used,
-                        True, duration_ms, "fallback_" + response.get("action", "unknown")
+                        True, duration_ms, "fallback_" + response.get("action", "unknown"),
+                        result_summary=f"fallback: {result_summary}",
+                        routing_info=f"original_failed -> fallback_to_{routing_decision.fallback_intent.value}",
+                        fallback_used=True,
+                        response_data=response
                     )
                     
                     response["session_id"] = session_id
@@ -162,7 +178,9 @@ class AssistantOrchestrator:
             log_execution(
                 self.logger, session_id, query, intent_result.intent.value,
                 intent_result.confidence, classification_metrics.model_used,
-                False, duration_ms, "failed", result.get("reason", "Unknown error")
+                False, duration_ms, "failed", 
+                routing_info=f"execution_failed, no_fallback_available",
+                error=result.get("reason", "Unknown error")
             )
             
             response["session_id"] = session_id
@@ -174,7 +192,7 @@ class AssistantOrchestrator:
             
             log_execution(
                 self.logger, session_id, query, "unknown", 0.0, "unknown",
-                False, duration_ms, "error", str(e)
+                False, duration_ms, "error", error=str(e)
             )
             
             return {
@@ -305,6 +323,23 @@ class AssistantOrchestrator:
             Intent.UPDATE: "update"
         }
         return mapping.get(intent, "unknown")
+    
+    def _create_result_summary(self, result: dict, response: dict) -> str:
+        """Create a short summary of execution results."""
+        if "obsidian_url" in response:
+            note_path = result.get("open_path", "unknown")
+            return f"opened: {note_path}"
+        elif "hits" in result:
+            count = len(result["hits"])
+            return f"found: {count} matches"
+        elif "text" in result:
+            text_len = len(result.get("text", ""))
+            return f"read: {text_len} chars"
+        elif "tables" in result:
+            count = result.get("count", 0)
+            return f"extracted: {count} tables"
+        else:
+            return "completed"
 
 
 ASSISTANT = AssistantOrchestrator(vault_root=VAULT_ROOT, commands_file=COMMANDS_FILE)
@@ -432,19 +467,42 @@ def open_for_shortcuts(
     prefer: str = Query(default="most_hits"),
     heading: str | None = Query(default=None),
 ):
-    r = resolve_query(query=q, vault_root=VAULT_ROOT, commands_file=COMMANDS_FILE, prefer=prefer)
-    if not r.found:
-        return {"found": False, "obsidian_url": None, "reason": r.reason}
-
-    urls = obsidian_open_urls(vault, r.open_path, heading=heading)
-    return {
-        "found": True,
-        "source": r.source,
-        "open_path": r.open_path,
-        "obsidian_url": urls["without_md"],
-        "obsidian_urls": urls,
-        "candidates": r.candidates,
-    }
+    # Use the new orchestrator system with enhanced logging
+    result = ASSISTANT.run(
+        query=q,
+        vault_name=vault,
+        prefer=prefer,
+        heading=heading,
+        section=None,
+    )
+    
+    # Transform orchestrator response to match /open API format for backward compatibility
+    if result.get("success", False) and result.get("obsidian_url"):
+        urls = obsidian_open_urls(vault, result.get("open_path", ""), heading=heading)
+        return {
+            "found": True,
+            "source": result.get("source", "unknown"),
+            "open_path": result.get("open_path", ""),
+            "obsidian_url": urls["without_md"],
+            "obsidian_urls": urls,
+            "candidates": result.get("candidates", []),
+            # Include orchestrator metadata for debugging
+            "session_id": result.get("session_id"),
+            "duration_ms": result.get("duration_ms"),
+            "intent": result.get("intent"),
+            "confidence": result.get("confidence")
+        }
+    else:
+        return {
+            "found": False,
+            "obsidian_url": None,
+            "reason": result.get("reason", result.get("user_message", "Unknown error")),
+            # Include orchestrator metadata for debugging
+            "session_id": result.get("session_id"),
+            "duration_ms": result.get("duration_ms"),
+            "intent": result.get("intent"),
+            "confidence": result.get("confidence")
+        }
 
 
 @app.get("/assistant", dependencies=[Depends(require_api_key)])

@@ -1,24 +1,44 @@
-- name: pancreatic_sbrt
+- name: parts
   keywords:
-    - 膵癌
-    - 膵臓癌
-    - pancreatic
-    - SBRT
+    - 部品
+    - パーツ
+    - parts
+    - 部品リスト
   open:
-    path: oncology/pancreas_sbrt.md
+    path: 部品.md
 
-- name: kakenhi
+- name: parts_case1
   keywords:
-    - 科研費
-    - kakenhi
-    - grant
+    - 部品ケース１
+    - 部品ケース1
+    - ケース1
+    - case1
   open:
-    path: grants/kakenhi_index.md
+    path: 物品/部品ケース１.md
 
-- name: electricity
+- name: parts_case_wiring
   keywords:
-    - 電力
-    - 消費電力
-    - ワット
+    - 配線
+    - 配線用
+    - wiring
+    - 部品ケース2
+    - ケース2
   open:
-    path: electmeter/dashboard.md
+    path: 物品/部品ケース2 配線用.md
+
+- name: parts_case_sensor
+  keywords:
+    - センサー
+    - sensor
+    - 部品ケース3
+    - ケース3
+  open:
+    path: 物品/部品ケース3 センサー.md
+
+- name: test_file
+  keywords:
+    - テスト
+    - test
+    - 実験
+  open:
+    path: テスト.md
