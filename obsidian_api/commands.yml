@@ -42,3 +42,16 @@
     - 実験
   open:
     path: テスト.md
+
+- name: file_list
+  keywords:
+    - ファイルリスト
+    - ファイル一覧
+    - file list
+    - files
+    - 全ファイル
+    - リストを表示
+    - リスト表示
+    - ファイルを表示
+  open:
+    path: "_special:files"  # Special handler for file listing

@@ -138,6 +138,23 @@ def handle_assistant_query(
         return {"ok": False, "intent": intent, "reason": rr.reason, "found": False}
 
     note_path = rr.open_path
+    
+    # Handle special commands
+    if note_path.startswith("_special:"):
+        special_type = note_path.replace("_special:", "")
+        if special_type == "files":
+            # Return file list using vault.py
+            from .vault import list_md_files
+            files = list_md_files(vault_root)
+            return {
+                "ok": True,
+                "found": True,
+                "intent": "table",
+                "source": "special_command",
+                "action": "list_files",
+                "files": files,
+                "user_message": f"Found {len(files)} files in vault"
+            }
     resp = {
         "ok": True,
         "found": True,

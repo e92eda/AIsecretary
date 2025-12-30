@@ -88,6 +88,7 @@ class RoutingPolicy:
             Intent.SUMMARIZE: Intent.READ,   # summarize -> read
             Intent.COMMENT: Intent.READ,     # comment -> read
             Intent.UPDATE: Intent.READ,      # update -> read
+            Intent.TABLE: Intent.SEARCH,     # table -> search (for file listings)
         }
         return fallback_map.get(intent)
     

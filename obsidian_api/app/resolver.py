@@ -46,6 +46,11 @@ def resolve_query(query: str, vault_root: Path, commands_file: Path, prefer: str
     cmd = match_command(query, commands)
     if cmd:
         logger.info(f"✅ Command match found: {cmd.open.path}")
+        # Handle special commands
+        if cmd.open.path.startswith("_special:"):
+            special_type = cmd.open.path.replace("_special:", "")
+            logger.info(f"🔧 Special command detected: {special_type}")
+            return ResolveResult(found=True, open_path=cmd.open.path, source="special_command")
         return ResolveResult(found=True, open_path=cmd.open.path, source="command")
 
     # Step 2: 元のクエリでVault全体を検索

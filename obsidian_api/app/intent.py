@@ -55,10 +55,16 @@ class IntentClassifier:
     def _detect_intent_with_confidence(self, text: str) -> tuple[Intent, float]:
         """Detect intent with confidence score (0.0 - 1.0)."""
         
-        # High confidence patterns (specific action keywords)
-        if any(k in text for k in ["開", "open", "表示", "開く"]):
-            return Intent.OPEN, 0.9
+        # Very high confidence patterns (composite/specific patterns)
+        # File listing requests
+        if any(k in text for k in ["ファイル", "file"]) and any(k in text for k in ["リスト", "一覧", "list"]):
+            return Intent.TABLE, 0.95
             
+        # List/table display requests  
+        if any(k in text for k in ["リスト", "一覧", "list"]) and any(k in text for k in ["表示", "show", "見せ"]):
+            return Intent.TABLE, 0.95
+        
+        # High confidence patterns (specific action keywords)
         if any(k in text for k in ["検索", "search", "探", "さが", "見つけ"]):
             return Intent.SEARCH, 0.9
             
@@ -67,6 +73,9 @@ class IntentClassifier:
             
         if any(k in text for k in ["表", "table", "一覧", "リスト"]):
             return Intent.TABLE, 0.9
+            
+        if any(k in text for k in ["開", "open", "表示", "開く"]):
+            return Intent.OPEN, 0.9
             
         # Medium confidence patterns (content-related)
         if any(k in text for k in ["読", "見", "内容", "本文", "全文"]):
