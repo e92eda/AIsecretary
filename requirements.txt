@@ -5,3 +5,4 @@ pyyaml==6.0.2
 pydantic==2.10.3
 pytest==7.4.4
 httpx==0.26.0
+markdown==3.7

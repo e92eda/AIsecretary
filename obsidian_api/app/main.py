@@ -18,6 +18,8 @@ from .intent import IntentClassifier, Intent, IntentResult
 from .routing import RoutingPolicy, Action, ClarificationGenerator
 from .classifier_factory import create_classifier, ClassifierType
 from .logging_utils import setup_orchestrator_logger, log_execution, create_session_id
+from .presentation.html_renderer import HtmlRenderer
+from .presentation.presenters import create_presenter
 
 
 app = FastAPI(title="AIsecretary Obsidian Vault API", version="0.3.0")
@@ -345,6 +347,53 @@ class AssistantOrchestrator:
 ASSISTANT = AssistantOrchestrator(vault_root=VAULT_ROOT, commands_file=COMMANDS_FILE)
 
 
+def _format_response(
+    data: dict, 
+    format: str = "json",
+    content_type: str = "assistant",
+    title: str = "AIsecretary",
+    css_theme: str | None = None,
+    mobile: bool | None = None
+):
+    """Format response based on requested format"""
+    if format.lower() != "html":
+        return data
+    
+    # Create presenter and convert to markdown
+    presenter = create_presenter(content_type)
+    
+    if content_type == "files":
+        markdown = presenter.to_markdown(data.get("files", []), "")
+    elif content_type == "search":
+        markdown = presenter.to_markdown(data.get("hits", []), data.get("q", ""))
+    elif content_type == "note":
+        markdown = presenter.to_markdown(data.get("text", ""), data.get("path", ""))
+    elif content_type == "resolve":
+        # Resolve returns candidates in a different format
+        candidates = []
+        if data.get("found"):
+            candidates = [{"name": data.get("open_path", ""), "score": 1.0, "path": data.get("open_path", "")}]
+        elif data.get("candidates"):
+            candidates = data.get("candidates", [])
+        markdown = presenter.to_markdown(candidates, data.get("query", ""))
+    elif content_type == "assistant":
+        markdown = presenter.to_markdown(data)
+    else:
+        # Fallback: convert dict to simple markdown
+        import json
+        markdown = f"# {title}\n\n```json\n{json.dumps(data, indent=2, ensure_ascii=False)}\n```"
+    
+    # Create HTML renderer with dynamic settings
+    renderer = HtmlRenderer(
+        theme=css_theme,
+        mobile_optimized=mobile
+    )
+    
+    html_content = renderer.render(markdown, title)
+    
+    return Response(content=html_content, media_type="text/html; charset=utf-8")
+
+
 @app.get("/health")
 def health(response: Response):
     response.headers["Cache-Control"] = "no-store"
@@ -367,17 +416,47 @@ def obsidian_api_health(response: Response):
 
 
 @app.get("/files", dependencies=[Depends(require_api_key)])
-def files():
+def files(
+    format: str = Query(default="json", description="Response format: json|html"),
+    css_theme: str | None = Query(default=None, description="CSS theme for HTML: obsidian|light|dark|minimal"),
+    mobile: bool | None = Query(default=None, description="Mobile optimization for HTML")
+):
     if not VAULT_ROOT.exists():
         raise HTTPException(500, detail="VAULT_ROOT not found")
-    return {"files": list_md_files(VAULT_ROOT)}
+    
+    result = {"files": list_md_files(VAULT_ROOT)}
+    
+    return _format_response(
+        data=result,
+        format=format,
+        content_type="files",
+        title="ファイル一覧",
+        css_theme=css_theme,
+        mobile=mobile
+    )
 
 
 @app.get("/search", dependencies=[Depends(require_api_key)])
-def search(q: str = Query(..., min_length=1), limit: int = 30):
+def search(
+    q: str = Query(..., min_length=1), 
+    limit: int = 30,
+    format: str = Query(default="json", description="Response format: json|html"),
+    css_theme: str | None = Query(default=None, description="CSS theme for HTML: obsidian|light|dark|minimal"),
+    mobile: bool | None = Query(default=None, description="Mobile optimization for HTML")
+):
     if not VAULT_ROOT.exists():
         raise HTTPException(500, detail="VAULT_ROOT not found")
-    return {"q": q, "hits": grep_vault(VAULT_ROOT, q, limit=limit)}
+    
+    result = {"q": q, "hits": grep_vault(VAULT_ROOT, q, limit=limit)}
+    
+    return _format_response(
+        data=result,
+        format=format,
+        content_type="search",
+        title=f"検索結果: {q}",
+        css_theme=css_theme,
+        mobile=mobile
+    )
 
 
 @app.get("/note", dependencies=[Depends(require_api_key)])
@@ -385,6 +464,9 @@ def note(
     path: str = Query(..., description="Vault-relative path like Foo/Bar.md"),
     section: str | None = Query(default=None, description="Heading title to extract, exact match"),
     with_frontmatter: bool = True,
+    format: str = Query(default="json", description="Response format: json|html"),
+    css_theme: str | None = Query(default=None, description="CSS theme for HTML: obsidian|light|dark|minimal"),
+    mobile: bool | None = Query(default=None, description="Mobile optimization for HTML")
 ):
     if not VAULT_ROOT.exists():
         raise HTTPException(500, detail="VAULT_ROOT not found")
@@ -408,16 +490,43 @@ def note(
     resp = {"path": str(p.relative_to(VAULT_ROOT)).replace("\\", "/"), "text": out_text}
     if with_frontmatter:
         resp["frontmatter"] = fm
-    return resp
+    
+    # Create title for HTML display
+    filename = path.split('/')[-1] if '/' in path else path
+    filename = filename.replace('.md', '')
+    title = f"ノート: {filename}"
+    if section:
+        title += f" - {section}"
+    
+    return _format_response(
+        data=resp,
+        format=format,
+        content_type="note",
+        title=title,
+        css_theme=css_theme,
+        mobile=mobile
+    )
 
 
 @app.get("/resolve", dependencies=[Depends(require_api_key)])
 def resolve_open_target(
     q: str = Query(..., min_length=1),
     prefer: str = Query(default="most_hits"),
+    format: str = Query(default="json", description="Response format: json|html"),
+    css_theme: str | None = Query(default=None, description="CSS theme for HTML: obsidian|light|dark|minimal"),
+    mobile: bool | None = Query(default=None, description="Mobile optimization for HTML")
 ):
     r = resolve_query(query=q, vault_root=VAULT_ROOT, commands_file=COMMANDS_FILE, prefer=prefer)
-    return r.model_dump()
+    result = r.model_dump()
+    
+    return _format_response(
+        data=result,
+        format=format,
+        content_type="resolve",
+        title=f"解決候補: {q}",
+        css_theme=css_theme,
+        mobile=mobile
+    )
 
 
 def obsidian_open_urls(vault_name: str, open_path: str, heading: str | None = None) -> dict[str, str]:
@@ -512,11 +621,151 @@ def assistant(
     prefer: str = Query(default="most_hits"),
     heading: str | None = Query(default=None),
     section: str | None = Query(default=None),
+    format: str = Query(default="json", description="Response format: json|html"),
+    css_theme: str | None = Query(default=None, description="CSS theme for HTML: obsidian|light|dark|minimal"),
+    mobile: bool | None = Query(default=None, description="Mobile optimization for HTML")
 ):
-    return ASSISTANT.run(
+    result = ASSISTANT.run(
         query=q,
         vault_name=vault,
         prefer=prefer,
         heading=heading,
         section=section,
     )
+    
+    return _format_response(
+        data=result,
+        format=format,
+        content_type="assistant",
+        title=f"AIsecretary: {q}",
+        css_theme=css_theme,
+        mobile=mobile
+    )
+
+
+# Core HTML endpoints
+@app.post("/render_html", dependencies=[Depends(require_api_key)])
+def render_html(
+    content: dict,
+    css_theme: str | None = Query(default=None, description="CSS theme: obsidian|light|dark|minimal"),
+    mobile: bool | None = Query(default=None, description="Mobile optimization"),
+    title: str = Query(default="AIsecretary", description="HTML document title")
+):
+    """Render arbitrary Markdown content to HTML"""
+    markdown_text = content.get("markdown", "")
+    
+    if not markdown_text:
+        raise HTTPException(400, detail="Missing 'markdown' field in request body")
+    
+    renderer = HtmlRenderer(
+        theme=css_theme,
+        mobile_optimized=mobile
+    )
+    
+    html_content = renderer.render(markdown_text, title)
+    return Response(content=html_content, media_type="text/html; charset=utf-8")
+
+
+@app.get("/view_html", dependencies=[Depends(require_api_key)])
+def view_html(
+    path: str = Query(..., description="Vault-relative path to markdown file"),
+    css_theme: str | None = Query(default=None, description="CSS theme: obsidian|light|dark|minimal"),
+    mobile: bool | None = Query(default=None, description="Mobile optimization")
+):
+    """View a specific markdown file as HTML"""
+    if not VAULT_ROOT.exists():
+        raise HTTPException(500, detail="VAULT_ROOT not found")
+    
+    try:
+        p = safe_join(VAULT_ROOT, path)
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    
+    if not p.exists():
+        raise HTTPException(404, detail="Note not found")
+    
+    if not path.lower().endswith('.md'):
+        raise HTTPException(400, detail="Only .md files are supported")
+    
+    # Read markdown content
+    try:
+        markdown_content = p.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        raise HTTPException(500, detail=f"Failed to read file: {str(e)}")
+    
+    # Create title from filename
+    filename = path.split('/')[-1] if '/' in path else path
+    filename = filename.replace('.md', '')
+    title = f"ノート: {filename}"
+    
+    # Render HTML
+    renderer = HtmlRenderer(
+        theme=css_theme,
+        mobile_optimized=mobile
+    )
+    
+    html_content = renderer.render(markdown_content, title)
+    return Response(content=html_content, media_type="text/html; charset=utf-8")
+
+
+@app.post("/save_md", dependencies=[Depends(require_api_key)])
+def save_markdown(
+    content: dict
+):
+    """Save markdown content to vault (restricted to configured write directory)"""
+    path = content.get("path", "")
+    markdown_content = content.get("content", "")
+    overwrite = content.get("overwrite", True)
+    
+    if not path or not markdown_content:
+        raise HTTPException(400, detail="Missing 'path' or 'content' field")
+    
+    if not path.lower().endswith('.md'):
+        raise HTTPException(400, detail="Only .md files are supported")
+    
+    if not VAULT_ROOT.exists():
+        raise HTTPException(500, detail="VAULT_ROOT not found")
+    
+    # Ensure path is restricted to vault_write_root for safety
+    write_root_name = settings.vault_write_root
+    if write_root_name:
+        if not path.startswith(write_root_name + '/') and path != write_root_name:
+            if '/' in path:
+                # Path has subdirectory but doesn't start with write_root
+                path = f"{write_root_name}/{path}"
+            else:
+                # Just a filename, put it in write_root
+                path = f"{write_root_name}/{path}"
+    
+    try:
+        full_path = safe_join(VAULT_ROOT, path)
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+    
+    # Create parent directory if it doesn't exist
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Check if file exists and overwrite setting
+    file_existed = full_path.exists()
+    if file_existed and not overwrite:
+        raise HTTPException(409, detail="File already exists and overwrite=false")
+    
+    try:
+        # Write the markdown content
+        full_path.write_text(markdown_content, encoding="utf-8")
+        
+        # Get file stats for response
+        file_size = full_path.stat().st_size
+        relative_path = str(full_path.relative_to(VAULT_ROOT)).replace("\\", "/")
+        
+        return {
+            "success": True,
+            "path": relative_path,
+            "size_bytes": file_size,
+            "overwritten": file_existed,
+            "write_root_restricted": bool(write_root_name),
+            "write_root": write_root_name
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, detail=f"Failed to save file: {str(e)}")
