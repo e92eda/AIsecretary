@@ -25,6 +25,9 @@ CLASSIFIER_TYPE=auto
 ```
 
 ### 起動
+
+Local
+
 ```bash
 uvicorn app.main:app --host 127.0.0.1 --port 8787 --reload
 ```
@@ -87,10 +90,18 @@ curl -H "X-API-Key: your-api-key" http://127.0.0.1:8787/files
 事前定義されたクエリ → ファイルパスのマッピング
 
 ```yaml
-- name: pancreatic_sbrt
-  keywords: [膵癌, pancreatic, SBRT]
+- name: parts
+  keywords:
+    - 部品
+    - パーツ
+    - parts
+    - 部品リスト
   open:
-    path: oncology/pancreas_sbrt.md
+    path: 部品.md
+
+  open:
+    path: "_special:files"  # Special handler for file listing
+
 ```
 
 ## ログ出力例

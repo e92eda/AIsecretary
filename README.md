@@ -17,6 +17,86 @@ AIsecretary は、自然言語による Obsidian Vault 操作を可能にする 
 - **🎨 HTML表示**: 美しいレスポンス表示（4テーマ対応）
 - **💾 保存機能**: 結果をMarkdownファイルとして保存
 
+## クイックスタート
+
+### 1. 環境設定
+
+```bash
+# リポジトリをクローン
+git clone <your-repo-url>
+cd AIsecretary
+
+# .env ファイルを作成
+cp .env.example .env
+```
+
+**.env ファイルを編集**:
+```bash
+# === 必須設定 ===
+# Obsidian Vault のルートディレクトリパス
+VAULT_ROOT=/path/to/your/obsidian/vault
+
+# API認証用の秘密キー（任意の文字列）
+AISECRETARY_API_KEY=your-secret-api-key
+
+# === LLM分類器設定（オプション） ===
+# OpenAI APIキー（LLM機能を使用する場合）
+OPENAI_API_KEY=your-openai-api-key
+
+# LLM分類器を有効にする（1=有効, 0=無効）
+ENABLE_LLM_CLASSIFIER=1
+
+# 分類器のタイプ（auto=自動選択, rule_based=ルールのみ, llm_based=LLMのみ）
+CLASSIFIER_TYPE=auto
+
+# 使用するLLMモデル（gpt-4o-mini推奨、コスト効率良好）
+LLM_CLASSIFIER_MODEL=gpt-4o-mini
+
+# LLM分類器失敗時のルールベースフォールバック（1=有効, 0=無効）
+ENABLE_CLASSIFIER_FALLBACK=1
+
+# === HTML表示設定（オプション） ===
+# デフォルトのCSSテーマ（obsidian|light|dark|minimal）
+CSS_THEME=obsidian
+
+# モバイル最適化を有効にする（iOS Safari向け、true=有効, false=無効）
+MOBILE_OPTIMIZED=true
+
+# HTML表示のフォントサイズ（pxまたはem単位）
+HTML_FONT_SIZE=18px
+
+# HTML表示の最大幅（px、%、または100%で画面幅いっぱい）
+HTML_MAX_WIDTH=100%
+
+# Markdown保存先の制限ディレクトリ（安全のため、Inboxフォルダに制限推奨）
+VAULT_WRITE_ROOT=Inbox
+```
+
+### 2. 起動
+
+```bash
+# 依存関係インストール
+pip install -r requirements.txt
+
+# サーバー起動
+uvicorn obsidian_api.app.main:app --host 127.0.0.1 --port 8787 --reload
+```
+
+**Swagger UI**: http://127.0.0.1:8787/docs
+
+### 3. 基本的な使用例
+
+```bash
+# ヘルスチェック
+curl "http://localhost:8787/health"
+
+# AIアシスタント（JSON）
+curl -H "X-API-Key: your-key" "http://localhost:8787/assistant?q=部品について教えて&vault=MyVault"
+
+# AIアシスタント（HTML表示）
+curl -H "X-API-Key: your-key" "http://localhost:8787/assistant?q=部品について教えて&vault=MyVault&format=html&css_theme=obsidian&mobile=true"
+```
+
 ## システムアーキテクチャ
 
 ### Orchestrator パターン
@@ -36,7 +116,7 @@ AIsecretary は、自然言語による Obsidian Vault 操作を可能にする 
 [ Execution Engine ]  既存API実行
       │
       ▼
-[ Response Builder ]  結果構築
+[ Response Builder ]  結果構築 + HTML変換
 ```
 
 ### 意図分類（Intent Classification）
@@ -52,40 +132,6 @@ AIsecretary は、自然言語による Obsidian Vault 操作を可能にする 
 | `update` | 追記案作成 | "部品に情報を追加" |
 | `table` | テーブル抽出 | "部品の表を表示" |
 | `unknown` | 判定不能 | 曖昧な入力 |
-
-## クイックスタート
-
-### 環境設定
-```bash
-# .env ファイル
-VAULT_ROOT=/path/to/your/obsidian/vault
-AISECRETARY_API_KEY=your-secret-key
-
-# LLM分類器（オプション）
-OPENAI_API_KEY=your-openai-key
-ENABLE_LLM_CLASSIFIER=1
-CLASSIFIER_TYPE=auto  # auto|rule_based|llm_based
-LLM_CLASSIFIER_MODEL=gpt-4o-mini
-ENABLE_CLASSIFIER_FALLBACK=1
-
-# HTML表示設定（オプション）
-CSS_THEME=obsidian              # obsidian|light|dark|minimal
-MOBILE_OPTIMIZED=true           # iOS最適化
-HTML_FONT_SIZE=18px             # フォントサイズ
-HTML_MAX_WIDTH=100%             # 最大幅
-VAULT_WRITE_ROOT=Inbox          # 保存先制限（安全）
-```
-
-### 起動
-```bash
-# 依存関係インストール
-pip install -r requirements.txt
-
-# サーバー起動
-uvicorn app.main:app --host 127.0.0.1 --port 8787 --reload
-```
-
-**Swagger UI**: http://127.0.0.1:8787/docs
 
 ## API エンドポイント
 
@@ -104,22 +150,22 @@ uvicorn app.main:app --host 127.0.0.1 --port 8787 --reload
 - `css_theme`: HTMLテーマ (`obsidian`|`light`|`dark`|`minimal`)
 - `mobile`: モバイル最適化 (`true`|`false`)
 
-**例**:
+**使用例**:
 ```bash
 # JSONレスポンス（デフォルト）
-curl "http://localhost:8787/assistant?q=部品について教えて&vault=MyVault"
+curl -H "X-API-Key: your-key" \
+  "http://localhost:8787/assistant?q=部品について教えて&vault=MyVault"
 
 # HTMLレスポンス（iOS Shortcuts向け）
-curl "http://localhost:8787/assistant?q=部品について教えて&vault=MyVault&format=html&css_theme=obsidian&mobile=true"
+curl -H "X-API-Key: your-key" \
+  "http://localhost:8787/assistant?q=部品について教えて&vault=MyVault&format=html&css_theme=obsidian&mobile=true"
 
 # 検索結果をHTML表示
-curl "http://localhost:8787/search?q=ダイオード&format=html&css_theme=light"
-
-# ファイル一覧をHTML表示
-curl "http://localhost:8787/files?format=html&css_theme=dark&mobile=true"
+curl -H "X-API-Key: your-key" \
+  "http://localhost:8787/search?q=ダイオード&format=html&css_theme=light"
 ```
 
-**レスポンス例**:
+**JSONレスポンス例**:
 ```json
 {
   "action": "comment",
@@ -144,22 +190,31 @@ curl "http://localhost:8787/files?format=html&css_theme=dark&mobile=true"
 #### `GET /files`
 ファイル一覧取得（認証必要）
 - `format`: レスポンス形式 (`json`|`html`)
+- `css_theme`: HTMLテーマ（format=html時）
+- `mobile`: モバイル最適化（format=html時）
 
 #### `GET /search`
 全文検索（認証必要）
 - `q`: 検索クエリ
 - `vault`: Vault名
 - `format`: レスポンス形式 (`json`|`html`)
+- `css_theme`: HTMLテーマ（format=html時）
+- `mobile`: モバイル最適化（format=html時）
 
 #### `GET /note`
 ノート取得（認証必要）
 - `path`: ノートパス
 - `section`: セクション名（オプション）
 - `format`: レスポンス形式 (`json`|`html`)
+- `css_theme`: HTMLテーマ（format=html時）
+- `mobile`: モバイル最適化（format=html時）
 
 #### `GET /resolve`
 曖昧解決・候補生成（認証必要）
+- `q`: クエリ
 - `format`: レスポンス形式 (`json`|`html`)
+- `css_theme`: HTMLテーマ（format=html時）
+- `mobile`: モバイル最適化（format=html時）
 
 #### `GET /open`
 Obsidian URL生成（認証必要）
@@ -169,23 +224,162 @@ Obsidian URL生成（認証必要）
 #### `POST /render_html`
 任意のMarkdownをHTML変換（認証必要）
 ```bash
-curl -X POST "http://localhost:8787/render_html" \
-  -H "Content-Type: application/json" \
-  -d '{"markdown": "# Test\n\nThis is **bold**.", "css_theme": "obsidian"}'
+curl -X POST -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  "http://localhost:8787/render_html" \
+  -d '{"markdown": "# Test\n\nThis is **bold**.", "css_theme": "obsidian", "mobile": true}'
 ```
 
 #### `GET /view_html`
 特定MarkdownファイルのHTML表示（認証必要）
 ```bash
-curl "http://localhost:8787/view_html?path=部品.md&css_theme=light&mobile=true"
+curl -H "X-API-Key: your-key" \
+  "http://localhost:8787/view_html?path=部品.md&css_theme=light&mobile=true"
 ```
 
 #### `POST /save_md`
 MarkdownコンテンツをVaultに保存（認証必要）
 ```bash
-curl -X POST "http://localhost:8787/save_md" \
-  -H "Content-Type: application/json" \
+curl -X POST -H "X-API-Key: your-key" -H "Content-Type: application/json" \
+  "http://localhost:8787/save_md" \
   -d '{"path": "output.md", "content": "# 保存内容", "overwrite": true}'
+```
+
+## 🎨 HTML表示テーマ
+
+### 利用可能テーマ
+
+#### 🌙 Obsidian（デフォルト）
+- **特徴**: ダークグレー背景、紫アクセント
+- **用途**: Obsidian ユーザー向け、夜間使用
+- **設定**: `css_theme=obsidian`
+
+#### ☀️ Light  
+- **特徴**: 白背景、GitHub風デザイン
+- **用途**: 日中使用、プレゼンテーション
+- **設定**: `css_theme=light`
+
+#### 🌃 Dark
+- **特徴**: 黒背景、青アクセント  
+- **用途**: 目に優しいダークモード
+- **設定**: `css_theme=dark`
+
+#### ✨ Minimal
+- **特徴**: シンプル、セリフフォント
+- **用途**: 読みやすさ重視、印刷向け
+- **設定**: `css_theme=minimal`
+
+### モバイル最適化
+
+**モバイル最適化効果:**
+- 📱 大きめフォント（18px）
+- 👆 タッチしやすいリンク（44px最小）
+- 📐 横スクロール防止
+- 🔄 iOS Safari特別対応
+
+```bash
+# モバイル最適化 ON（iOS推奨）
+curl "http://localhost:8787/assistant?q=部品&vault=MyVault&format=html&mobile=true"
+
+# デスクトップ表示
+curl "http://localhost:8787/assistant?q=部品&vault=MyVault&format=html&mobile=false"
+```
+
+## 📱 iOS Shortcuts での使用
+
+### 基本ワークフロー
+
+1. **ショートカット作成**
+   - 「URLの内容を取得」アクション
+   - URL: `http://localhost:8787/assistant?q=[音声入力]&vault=MyVault&format=html&css_theme=obsidian&mobile=true`
+   - ヘッダー: `X-API-Key: your-secret-key`
+
+2. **表示**
+   - 「Webページを表示」アクション
+
+### 推奨設定
+
+```
+URL: http://localhost:8787/assistant
+パラメータ:
+  q: [ショートカット入力]  
+  vault: MyVault
+  format: html
+  css_theme: obsidian
+  mobile: true
+ヘッダー:
+  X-API-Key: your-secret-key
+```
+
+### 音声コマンド例
+
+- **「部品を開いて」** → ノートオープン（HTML表示）
+- **「ダイオードを検索」** → 検索結果（HTML表示）
+- **「部品について教えて」** → AI解説（HTML表示）
+
+## 分類器比較
+
+### Rule-based（ルールベース）
+- **速度**: 高速（~0.1ms）
+- **精度**: シンプルなパターンに最適
+- **コスト**: 無料
+- **用途**: 明確なコマンド
+
+### LLM-based（LLM）
+- **速度**: 中程度（~200ms）
+- **精度**: 複雑な自然言語に強い
+- **コスト**: API利用料
+- **用途**: 曖昧・複雑なクエリ
+
+### Auto（自動選択）
+クエリの複雑さに応じて自動選択
+
+## フォールバック戦略
+
+| 元 Intent | フォールバック先 | 条件 |
+|-----------|------------------|------|
+| open | search | ノートが見つからない |
+| read | search | 読み込み失敗 |
+| summarize | read | 要約対象不明確 |
+| comment | read | コメント対象不明確 |
+| update | read | 更新対象不明確 |
+
+## 認証
+
+全ての保護されたエンドポイントには `X-API-Key` ヘッダーが必要：
+```bash
+curl -H "X-API-Key: your-secret-key" "http://localhost:8787/files?vault=MyVault"
+```
+
+## テスト
+
+```bash
+# 基本テスト
+python -m pytest obsidian_api/test_api.py -v
+
+# Intent分類器テスト  
+python obsidian_api/test_intent_classifier.py
+
+# Phase 2機能テスト
+python obsidian_api/test_phase2.py
+
+# HTML表示機能テスト
+python obsidian_api/test_html_features.py
+
+# 簡易HTML動作確認
+python simple_html_test.py
+
+# オーケストレーター統合テスト
+python obsidian_api/test_orchestrator_flow.py
+```
+
+### HTML表示テスト
+
+```bash
+# 各テーマでのHTML生成テスト
+python obsidian_api/test_html_features.py
+
+# サンプルHTML生成（ブラウザ確認用）
+ls test_output/*.html
 ```
 
 ## 実装フェーズ
@@ -228,102 +422,8 @@ curl -X POST "http://localhost:8787/save_md" \
 - **Multi-turn conversation**: 複数ターン対話
 - **Personalization**: ユーザー学習機能
 - **State management**: セッション状態保持
-
-## 分類器比較
-
-### Rule-based（ルールベース）
-- **速度**: 高速（~0.1ms）
-- **精度**: シンプルなパターンに最適
-- **コスト**: 無料
-- **用途**: 明確なコマンド
-
-### LLM-based（LLM）
-- **速度**: 中程度（~200ms）
-- **精度**: 複雑な自然言語に強い
-- **コスト**: API利用料
-- **用途**: 曖昧・複雑なクエリ
-
-### Auto（自動選択）
-クエリの複雑さに応じて自動選択
-
-## 🎨 HTML表示テーマ
-
-### 利用可能テーマ
-
-#### 🌙 Obsidian（デフォルト）
-- **特徴**: ダークグレー背景、紫アクセント
-- **用途**: Obsidian ユーザー向け、夜間使用
-- **設定**: `css_theme=obsidian`
-
-#### ☀️ Light  
-- **特徴**: 白背景、GitHub風デザイン
-- **用途**: 日中使用、プレゼンテーション
-- **設定**: `css_theme=light`
-
-#### 🌃 Dark
-- **特徴**: 黒背景、青アクセント  
-- **用途**: 目に優しいダークモード
-- **設定**: `css_theme=dark`
-
-#### ✨ Minimal
-- **特徴**: シンプル、セリフフォント
-- **用途**: 読みやすさ重視、印刷向け
-- **設定**: `css_theme=minimal`
-
-### モバイル最適化
-
-```bash
-# モバイル最適化 ON（iOS推奨）
-curl "http://localhost:8787/assistant?q=部品&vault=MyVault&format=html&mobile=true"
-
-# デスクトップ表示
-curl "http://localhost:8787/assistant?q=部品&vault=MyVault&format=html&mobile=false"
-```
-
-**モバイル最適化効果:**
-- 📱 大きめフォント（18px）
-- 👆 タッチしやすいリンク
-- 📐 横スクロール防止
-- 🔄 iOS Safari特別対応
-
-## 📱 iOS Shortcuts での使用
-
-### 基本ワークフロー
-
-1. **ショートカット作成**
-   - 「URLの内容を取得」アクション
-   - URL: `http://localhost:8787/assistant?q=[音声入力]&vault=MyVault&format=html&css_theme=obsidian&mobile=true`
-
-2. **表示**
-   - 「Webページを表示」アクション
-
-### 推奨設定
-
-```
-URL: http://localhost:8787/assistant
-パラメータ:
-  q: [ショートカット入力]  
-  vault: MyVault
-  format: html
-  css_theme: obsidian
-  mobile: true
-```
-
-### 音声コマンド例
-
-- **「部品を開いて」** → ノートオープン（HTML表示）
-- **「ダイオードを検索」** → 検索結果（HTML表示）
-- **「部品について教えて」** → AI解説（HTML表示）
-
-## フォールバック戦略
-
-| 元 Intent | フォールバック先 | 条件 |
-|-----------|------------------|------|
-| open | search | ノートが見つからない |
-| read | search | 読み込み失敗 |
-| summarize | read | 要約対象不明確 |
-| comment | read | コメント対象不明確 |
-| update | read | 更新対象不明確 |
+- **PDF エクスポート**: `format=pdf` パラメータ
+- **自動デバイス検出**: User-Agent による最適化
 
 ## ログ例
 
@@ -357,45 +457,6 @@ URL: http://localhost:8787/assistant
    User Message: 'ノートを開きました'
 ```
 
-## 認証
-
-全ての保護されたエンドポイントには `X-API-Key` ヘッダーが必要：
-```bash
-curl -H "X-API-Key: your-secret-key" "http://localhost:8787/files?vault=MyVault"
-```
-
-## テスト
-
-```bash
-# 基本テスト
-python -m pytest test_api.py -v
-
-# Intent分類器テスト  
-python test_intent_classifier.py
-
-# Phase 2機能テスト
-python test_phase2.py
-
-# HTML表示機能テスト
-python test_html_features.py
-
-# 簡易HTML動作確認
-python simple_html_test.py
-
-# オーケストレーター統合テスト
-python test_orchestrator_flow.py
-```
-
-### HTML表示テスト
-
-```bash
-# 各テーマでのHTML生成テスト
-python test_html_features.py
-
-# サンプルHTML生成（ブラウザ確認用）
-ls test_output/*.html
-```
-
 ## 技術スタック
 
 - **FastAPI**: Web フレームワーク
@@ -405,6 +466,35 @@ ls test_output/*.html
 - **YAML**: 設定管理
 - **pytest**: テストフレームワーク
 
+## プロジェクト構造
+
+```
+AIsecretary/
+├── .env.example                    # 環境変数サンプル
+├── requirements.txt                # 依存関係
+├── README.md                       # このファイル
+├── simple_html_test.py             # 簡易HTML動作テスト
+└── obsidian_api/
+    ├── app/
+    │   ├── main.py                 # FastAPI アプリケーション
+    │   ├── config.py               # 設定管理
+    │   ├── intent.py               # ルールベース意図分類器
+    │   ├── llm_classifier.py       # LLM意図分類器
+    │   ├── classifier_factory.py   # A/Bテスト統合
+    │   ├── routing.py              # ルーティング・フォールバック
+    │   ├── logging_utils.py        # ログ機能
+    │   ├── resolver.py             # クエリ解決
+    │   ├── assistant_logic.py      # アシスタントロジック
+    │   ├── presentation/           # HTML表示機能
+    │   │   ├── html_renderer.py    # HTML生成エンジン
+    │   │   └── presenters.py       # データ→Markdown変換
+    │   ├── search.py               # 検索機能
+    │   ├── vault.py                # Vault操作
+    │   └── security.py             # 認証機能
+    ├── test_*.py                   # 各種テストファイル
+    └── Doccuments/                 # 設計ドキュメント
+```
+
 ## 設計原則
 
 1. **安全性**: LLMに全権委任せず、制御をコード側で管理
@@ -412,6 +502,39 @@ ls test_output/*.html
 3. **評価可能性**: 信頼度・実行結果の詳細ログ
 4. **拡張性**: クラス設計による将来機能追加対応
 5. **後方互換性**: 既存APIとの完全互換性維持
+6. **モバイルファースト**: iOS Shortcuts での使いやすさを重視
+
+## トラブルシューティング
+
+### よくある問題
+
+#### 1. "Module not found" エラー
+```bash
+# 仮想環境をアクティベート
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+#### 2. Vault が見つからない
+```bash
+# .env ファイルの VAULT_ROOT を確認
+echo $VAULT_ROOT
+ls "$VAULT_ROOT"  # ファイルが存在するか確認
+```
+
+#### 3. API キーエラー
+```bash
+# .env ファイルの API キー設定を確認
+echo $AISECRETARY_API_KEY
+```
+
+#### 4. LLM 分類器が動かない
+```bash
+# OpenAI API キーを確認
+echo $OPENAI_API_KEY
+# LLM 分類器を無効にして確認
+ENABLE_LLM_CLASSIFIER=0 uvicorn obsidian_api.app.main:app --reload
+```
 
 ---
 
@@ -427,5 +550,6 @@ ls test_output/*.html
 - ✅ **モバイル特化**: iOS Safari向け特別チューニング
 - ✅ **保存機能**: 表示内容をMarkdownファイルとして安全保存
 - ✅ **統一インターフェース**: 全エンドポイントで `format=html` 対応
+- ✅ **包括的ドキュメント**: 詳細な設定方法と使い方ガイド
 
 AIsecretary がより使いやすく、より美しく進化しました！🚀
