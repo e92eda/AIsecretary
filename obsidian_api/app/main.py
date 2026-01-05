@@ -347,6 +347,37 @@ class AssistantOrchestrator:
 ASSISTANT = AssistantOrchestrator(vault_root=VAULT_ROOT, commands_file=COMMANDS_FILE)
 
 
+def _add_shortcut_keys(data: dict) -> dict:
+    """Add helper keys for Apple Shortcuts decision making"""
+    # Create a copy to avoid modifying original data
+    enhanced_data = data.copy()
+    
+    action = data.get('action', '')
+    obsidian_url = data.get('obsidian_url', '')
+    
+    # Add shortcut action type
+    if action == 'open' and obsidian_url:
+        enhanced_data['shortcut_action'] = 'open_obsidian'
+        enhanced_data['should_open_obsidian'] = True
+    elif action in ['search', 'read', 'comment', 'summarize']:
+        enhanced_data['shortcut_action'] = 'display_content'
+        enhanced_data['should_open_obsidian'] = False
+    elif action == 'list_files':
+        enhanced_data['shortcut_action'] = 'display_list'
+        enhanced_data['should_open_obsidian'] = False
+    else:
+        enhanced_data['shortcut_action'] = 'display_content'
+        enhanced_data['should_open_obsidian'] = False
+    
+    # Add easy access to key info
+    if obsidian_url:
+        enhanced_data['obsidian_ready'] = True
+    else:
+        enhanced_data['obsidian_ready'] = False
+    
+    return enhanced_data
+
+
 def _format_response(
     data: dict, 
     format: str = "json",
@@ -357,6 +388,9 @@ def _format_response(
 ):
     """Format response based on requested format"""
     if format.lower() != "html":
+        # Add shortcut helper keys for JSON responses
+        if content_type == "assistant":
+            data = _add_shortcut_keys(data)
         return data
     
     # Create presenter and convert to markdown
@@ -383,13 +417,25 @@ def _format_response(
         import json
         markdown = f"# {title}\n\n```json\n{json.dumps(data, indent=2, ensure_ascii=False)}\n```"
     
+    # Add shortcut keys for HTML format too
+    if content_type == "assistant":
+        enhanced_data = _add_shortcut_keys(data)
+        shortcut_metadata = {
+            "should_open_obsidian": enhanced_data.get("should_open_obsidian", False),
+            "shortcut_action": enhanced_data.get("shortcut_action", "display_content"),
+            "obsidian_url": enhanced_data.get("obsidian_url", ""),
+            "obsidian_ready": enhanced_data.get("obsidian_ready", False)
+        }
+    else:
+        shortcut_metadata = {"shortcut_action": "display_content", "should_open_obsidian": False}
+    
     # Create HTML renderer with dynamic settings
     renderer = HtmlRenderer(
         theme=css_theme,
         mobile_optimized=mobile
     )
     
-    html_content = renderer.render(markdown, title)
+    html_content = renderer.render(markdown, title, shortcut_metadata)
     
     return Response(content=html_content, media_type="text/html; charset=utf-8")
 
@@ -563,10 +609,9 @@ def obsidian_open_urls(vault_name: str, open_path: str, heading: str | None = No
 def obsidian_open_url(vault_name: str, open_path: str, heading: str | None = None) -> str:
     """Backward-compatible single URL.
 
-    Prefer the no-extension form (Obsidian wikilink-style), but callers that
-    need the `.md` form can use `obsidian_open_urls()`.
+    Use the .md extension form for better compatibility.
     """
-    return obsidian_open_urls(vault_name, open_path, heading=heading)["without_md"]
+    return obsidian_open_urls(vault_name, open_path, heading=heading)["with_md"]
 
 
 @app.get("/open", dependencies=[Depends(require_api_key)])
@@ -769,3 +814,260 @@ def save_markdown(
         
     except Exception as e:
         raise HTTPException(500, detail=f"Failed to save file: {str(e)}")
+
+
+@app.get("/test")
+def run_simple_tests():
+    """Run simple in-app tests to verify functionality"""
+    
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "tests": [],
+        "summary": {
+            "total": 0,
+            "passed": 0,
+            "failed": 0
+        }
+    }
+    
+    def add_test(name: str, passed: bool, details: str = ""):
+        results["tests"].append({
+            "name": name,
+            "status": "PASS" if passed else "FAIL", 
+            "details": details
+        })
+        results["summary"]["total"] += 1
+        if passed:
+            results["summary"]["passed"] += 1
+        else:
+            results["summary"]["failed"] += 1
+    
+    # Test 1: Vault accessibility
+    try:
+        vault_exists = VAULT_ROOT.exists()
+        add_test("Vault Root Exists", vault_exists, f"Path: {VAULT_ROOT}")
+        
+        if vault_exists:
+            md_files = list(VAULT_ROOT.glob("*.md"))
+            add_test("Has MD Files", len(md_files) > 0, f"Found {len(md_files)} .md files")
+    except Exception as e:
+        add_test("Vault Root Exists", False, f"Error: {str(e)}")
+    
+    # Test 2: Intent classifier
+    try:
+        classifier = create_classifier()
+        test_query = "テスト"
+        intent_result, metrics = classifier.classify(test_query)
+        
+        add_test("Intent Classification", 
+                intent_result.intent in [Intent.OPEN, Intent.SEARCH, Intent.READ, Intent.SUMMARIZE, Intent.COMMENT, Intent.UPDATE, Intent.TABLE, Intent.UNKNOWN],
+                f"Intent: {intent_result.intent.value}, Confidence: {intent_result.confidence:.2f}, Model: {metrics.model_used}")
+    except Exception as e:
+        add_test("Intent Classification", False, f"Error: {str(e)}")
+    
+    # Test 3: HTML renderer
+    try:
+        renderer = HtmlRenderer()
+        test_md = "# Test\n\nThis is **bold** text."
+        html = renderer.render(test_md, "Test")
+        
+        has_html_structure = all(tag in html for tag in ["<html>", "<body>", "<h1>", "<strong>"])
+        add_test("HTML Rendering", has_html_structure, f"Generated {len(html)} chars")
+    except Exception as e:
+        add_test("HTML Rendering", False, f"Error: {str(e)}")
+    
+    # Test 4: Configuration
+    try:
+        config_ok = all([
+            hasattr(settings, 'vault_root'),
+            hasattr(settings, 'aisecretary_api_key'),
+            hasattr(settings, 'css_theme')
+        ])
+        add_test("Configuration", config_ok, f"Theme: {getattr(settings, 'css_theme', 'N/A')}")
+    except Exception as e:
+        add_test("Configuration", False, f"Error: {str(e)}")
+    
+    # Test 5: Search functionality
+    try:
+        if VAULT_ROOT.exists():
+            search_results = grep_vault("test", VAULT_ROOT)
+            add_test("Search Engine", True, f"Search completed, found {len(search_results)} results")
+        else:
+            add_test("Search Engine", False, "Vault not accessible")
+    except Exception as e:
+        add_test("Search Engine", False, f"Error: {str(e)}")
+    
+    return results
+
+
+@app.get("/test/intent")
+def test_intent_classification(q: str = Query("部品を開いて", description="Test query")):
+    """Test intent classification with custom query"""
+    
+    try:
+        classifier = create_classifier()
+        intent_result, metrics = classifier.classify(q)
+        
+        return {
+            "query": q,
+            "result": {
+                "intent": intent_result.intent.value,
+                "confidence": intent_result.confidence,
+                "extracted_note": intent_result.extracted_note
+            },
+            "metrics": {
+                "model_used": metrics.model_used,
+                "latency_ms": metrics.latency_ms,
+                "tokens_used": getattr(metrics, 'tokens_used', None)
+            }
+        }
+    except Exception as e:
+        return {
+            "query": q,
+            "error": str(e)
+        }
+
+
+@app.get("/test/search")
+def test_search_functionality(
+    q: str = Query("test", description="Search query"),
+    vault: str = Query("", description="Vault name (optional)")
+):
+    """Test search functionality"""
+    
+    try:
+        vault_path = safe_join(VAULT_ROOT, vault) if vault else VAULT_ROOT
+        
+        search_results = grep_vault(q, vault_path)
+        
+        return {
+            "query": q,
+            "vault": vault or "root",
+            "results": {
+                "count": len(search_results),
+                "files": [
+                    {
+                        "file": result["file"],
+                        "matches": len(result["matches"])
+                    } for result in search_results[:5]  # First 5 results
+                ]
+            }
+        }
+    except Exception as e:
+        return {
+            "query": q,
+            "vault": vault,
+            "error": str(e)
+        }
+
+
+@app.get("/test/html")
+def test_html_rendering(
+    theme: str = Query("obsidian", description="CSS theme"),
+    mobile: bool = Query(True, description="Mobile optimization")
+):
+    """Test HTML rendering with different themes"""
+    
+    try:
+        renderer = HtmlRenderer(theme=theme, mobile_optimized=mobile)
+        
+        test_markdown = """# テストページ
+
+これは**太字**テキストと*斜体*テキストです。
+
+## リスト
+- アイテム 1
+- アイテム 2
+- アイテム 3
+
+## コード
+```python
+print("Hello, World!")
+```
+
+## テーブル
+| 列1 | 列2 | 列3 |
+|-----|-----|-----|
+| A   | B   | C   |
+| 1   | 2   | 3   |
+
+## リンク
+[AIsecretary Documentation](../README.md)
+"""
+        
+        html = renderer.render(test_markdown, "テスト")
+        
+        # Return just metrics for JSON response
+        return {
+            "theme": theme,
+            "mobile_optimized": mobile,
+            "result": {
+                "html_size": len(html),
+                "has_css": "style>" in html,
+                "has_content": "テストページ" in html,
+                "mobile_meta": 'viewport' in html if mobile else "N/A"
+            },
+            "sample_url": f"/test/html/view?theme={theme}&mobile={mobile}"
+        }
+    except Exception as e:
+        return {
+            "theme": theme,
+            "mobile_optimized": mobile,
+            "error": str(e)
+        }
+
+
+@app.get("/test/html/view")
+def view_test_html(
+    theme: str = Query("obsidian", description="CSS theme"),
+    mobile: bool = Query(True, description="Mobile optimization")
+):
+    """View test HTML rendering (returns actual HTML)"""
+    
+    try:
+        renderer = HtmlRenderer(theme=theme, mobile_optimized=mobile)
+        
+        test_markdown = """# テストページ - {theme}
+
+これは**太字**テキストと*斜体*テキストです。
+
+## 機能テスト
+
+### リスト
+- ✅ 基本マークダウン
+- ✅ CSS テーマ: **{theme}**
+- ✅ モバイル最適化: **{mobile}**
+
+### コード
+```python
+# AIsecretary テスト
+print("Theme: {theme}")
+print("Mobile: {mobile}")
+```
+
+### テーブル
+| 項目 | 値 | 状態 |
+|------|-----|------|
+| テーマ | {theme} | ✅ |
+| モバイル | {mobile} | ✅ |
+| 日本語 | あいうえお | ✅ |
+
+### 特殊文字
+**日本語**: こんにちは、世界！  
+**記号**: →←↑↓ ★☆ ◆◇ ●○  
+**絵文字**: 🚀 🎯 🔍 📱 💻
+
+---
+
+**テスト完了** - {theme} テーマ、モバイル最適化: {mobile}
+""".format(theme=theme, mobile="有効" if mobile else "無効")
+        
+        html = renderer.render(test_markdown, f"テスト - {theme}")
+        
+        return Response(content=html, media_type="text/html; charset=utf-8")
+        
+    except Exception as e:
+        error_html = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Test Error</title></head>
+<body><h1>テストエラー</h1><p>Error: {str(e)}</p></body></html>"""
+        return Response(content=error_html, media_type="text/html; charset=utf-8")

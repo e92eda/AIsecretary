@@ -27,7 +27,7 @@ git clone <your-repo-url>
 cd AIsecretary
 
 # .env ファイルを作成
-cp .env.example .env
+cp .env.example .env #その後必要箇所を編集
 ```
 
 **.env ファイルを編集**:
@@ -552,4 +552,30 @@ ENABLE_LLM_CLASSIFIER=0 uvicorn obsidian_api.app.main:app --reload
 - ✅ **統一インターフェース**: 全エンドポイントで `format=html` 対応
 - ✅ **包括的ドキュメント**: 詳細な設定方法と使い方ガイド
 
-AIsecretary がより使いやすく、より美しく進化しました！🚀
+# Obsidian API (FastAPI) を Django と共存させて Nginx 配下で公開する構成メモ
+
+## 目的
+- https://kuniedas.org/  
+  → Django（winstock プロジェクト）
+- https://kuniedas.org/obsidian-api/  
+  → FastAPI（Obsidian API）
+
+を **同一ドメイン・同一 Nginx** 上で安全に共存させる。
+
+---
+
+## 全体構成（役割分担）
+
+[ Internet ]  
+　↓  
+[ Nginx :443 ]  
+　├─ /               → Gunicorn (Django)  
+　├─ /obsidian-api/  → Uvicorn (FastAPI)  
+　├─ /flower/        → Celery Flower  
+　└─ /crashdash/     → Dash  
+
+---
+
+## Nginx 設定（最重要）
+
+### 設定ファイル

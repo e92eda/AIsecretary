@@ -44,8 +44,8 @@ class HtmlRenderer:
             }
         )
     
-    def render(self, markdown_text: str, title: str = "AIsecretary") -> str:
-        """Convert Markdown to styled HTML"""
+    def render(self, markdown_text: str, title: str = "AIsecretary", metadata: dict = None) -> str:
+        """Convert Markdown to styled HTML with optional metadata"""
         # Convert markdown to HTML
         html_content = self.md.convert(markdown_text)
         
@@ -53,10 +53,20 @@ class HtmlRenderer:
         css = self._get_complete_css()
         
         # Build complete HTML document
-        return self._build_html_document(html_content, css, title)
+        return self._build_html_document(html_content, css, title, metadata)
     
-    def _build_html_document(self, content: str, css: str, title: str) -> str:
-        """Build complete HTML document"""
+    def _build_html_document(self, content: str, css: str, title: str, metadata: dict = None) -> str:
+        """Build complete HTML document with Obsidian link handling and metadata"""
+        javascript = self._get_obsidian_javascript()
+        
+        # Add metadata as hidden elements for Shortcuts access
+        metadata_elements = ""
+        if metadata:
+            for key, value in metadata.items():
+                safe_key = self._escape_html(str(key))
+                safe_value = self._escape_html(str(value))
+                metadata_elements += f'    <meta name="shortcut-{safe_key}" content="{safe_value}">\n'
+        
         return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -65,9 +75,12 @@ class HtmlRenderer:
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <title>{self._escape_html(title)}</title>
-    <style>
+{metadata_elements}    <style>
 {css}
     </style>
+    <script>
+{javascript}
+    </script>
 </head>
 <body>
     <article class="markdown-body">
@@ -79,6 +92,175 @@ class HtmlRenderer:
     def _escape_html(self, text: str) -> str:
         """Escape HTML entities"""
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    
+    def _get_obsidian_javascript(self) -> str:
+        """JavaScript for Obsidian link handling and auto-opening"""
+        return """
+// Obsidian Link Handler for AIsecretary
+(function() {
+    'use strict';
+    
+    // Auto-open Obsidian link if present (for 'open' actions)
+    function autoOpenObsidianLink() {
+        // Look for obsidian:// links in the page
+        const obsidianLinks = document.querySelectorAll('a[href^="obsidian://"]');
+        
+        if (obsidianLinks.length > 0) {
+            const link = obsidianLinks[0];
+            const url = link.href;
+            
+            // Add visual feedback
+            addOpenButton(link, url);
+            
+            // Auto-open after a short delay (iOS needs user gesture for some schemes)
+            setTimeout(() => {
+                const message = `Obsidianでファイルを開きますか？\\n\\nURL: ${url}\\nVault: ${extractVaultFromUrl(url)}\\nFile: ${extractFileFromUrl(url)}`;
+                if (window.confirm(message)) {
+                    try {
+                        window.location.href = url;
+                    } catch (e) {
+                        console.error('Obsidian URL open failed:', e);
+                        fallbackUrlHandle(url);
+                    }
+                }
+            }, 1000);
+        }
+    }
+    
+    // Add prominent open button
+    function addOpenButton(originalLink, url) {
+        // Create enhanced button
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            margin: 20px 0;
+            text-align: center;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        `;
+        
+        const button = document.createElement('button');
+        button.textContent = '📱 Obsidianで開く';
+        button.style.cssText = `
+            background: white;
+            color: #333;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        `;
+        
+        // Add hover effects
+        button.onmousedown = () => {
+            button.style.transform = 'scale(0.95)';
+        };
+        button.onmouseup = () => {
+            button.style.transform = 'scale(1)';
+        };
+        
+        // Click handler
+        button.onclick = () => {
+            console.log('Attempting to open Obsidian URL:', url);
+            try {
+                window.location.href = url;
+                // Add fallback for iOS
+                setTimeout(() => {
+                    if (document.visibilityState === 'visible') {
+                        // If still visible after 1 second, URL scheme probably failed
+                        fallbackUrlHandle(url);
+                    }
+                }, 1000);
+            } catch (e) {
+                console.error('Failed to open Obsidian URL:', e);
+                fallbackUrlHandle(url);
+            }
+        };
+        
+        buttonContainer.appendChild(button);
+        
+        // Insert after the original link
+        originalLink.parentNode.insertBefore(buttonContainer, originalLink.nextSibling);
+        
+        // Hide or enhance original link
+        originalLink.style.cssText = `
+            display: block;
+            margin-top: 10px;
+            padding: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            font-size: 12px;
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            word-break: break-all;
+        `;
+        originalLink.textContent = `🔗 ${url}`;
+    }
+    
+    // Helper functions
+    function extractVaultFromUrl(url) {
+        const match = url.match(/vault=([^&]+)/);
+        return match ? decodeURIComponent(match[1]) : 'Unknown';
+    }
+    
+    function extractFileFromUrl(url) {
+        const match = url.match(/file=([^&]+)/);
+        return match ? decodeURIComponent(match[1]) : 'Unknown';
+    }
+    
+    function fallbackUrlHandle(url) {
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(url).then(() => {
+                alert('Obsidian URLをクリップボードにコピーしました。\\n\\nObsidianアプリを手動で開き、\\nブラウザに戻ってファイルを開いてください。');
+            }).catch(() => {
+                prompt('このURLをコピーしてObsidianで開いてください:', url);
+            });
+        } else {
+            prompt('このURLをコピーしてObsidianで開いてください:', url);
+        }
+    }
+    
+    // Enhanced link clicking for all obsidian:// links
+    function enhanceObsidianLinks() {
+        document.addEventListener('click', function(e) {
+            const target = e.target;
+            if (target.tagName === 'A' && target.href.startsWith('obsidian://')) {
+                e.preventDefault();
+                
+                // Try direct navigation
+                try {
+                    window.location.href = target.href;
+                } catch (error) {
+                    // Fallback: show URL for manual copying
+                    const url = target.href;
+                    if (navigator.clipboard) {
+                        navigator.clipboard.writeText(url).then(() => {
+                            alert('Obsidian URLをクリップボードにコピーしました。\\nObsidianアプリを開いて貼り付けてください。');
+                        });
+                    } else {
+                        prompt('このURLをコピーしてObsidianアプリで開いてください:', url);
+                    }
+                }
+            }
+        });
+    }
+    
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            autoOpenObsidianLink();
+            enhanceObsidianLinks();
+        });
+    } else {
+        autoOpenObsidianLink();
+        enhanceObsidianLinks();
+    }
+})();
+"""
     
     def _get_complete_css(self) -> str:
         """Generate complete CSS with theme and settings"""

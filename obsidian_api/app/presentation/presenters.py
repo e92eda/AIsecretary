@@ -238,6 +238,9 @@ class AssistantPresenter(BasePresenter):
                 ""
             ])
         
+        # Handle special content based on action type
+        self._add_action_specific_content(markdown, assistant_response)
+        
         # Add Obsidian URL if available
         obsidian_url = assistant_response.get('obsidian_url')
         if obsidian_url:
@@ -298,13 +301,217 @@ class AssistantPresenter(BasePresenter):
                 f"**ルーティング理由:** {debug_info}",
                 "",
                 "```json",
-                json.dumps(assistant_response, indent=2, ensure_ascii=False),
+                self._safe_json_dumps(assistant_response),
                 "```",
                 "",
                 "</details>"
             ])
         
         return "\n".join(markdown)
+    
+    def _safe_json_dumps(self, obj: Any) -> str:
+        """Safely serialize object to JSON, handling non-serializable types"""
+        import json
+        from datetime import date, datetime
+        
+        def default_serializer(obj):
+            if isinstance(obj, (date, datetime)):
+                return obj.isoformat()
+            elif hasattr(obj, '__dict__'):
+                return str(obj)
+            elif hasattr(obj, 'value'):  # Handle enums
+                return obj.value
+            else:
+                return str(obj)
+        
+        try:
+            return json.dumps(obj, indent=2, ensure_ascii=False, default=default_serializer)
+        except Exception as e:
+            return f"{{\"error\": \"Failed to serialize: {str(e)}\"}}"
+    
+    def _add_action_specific_content(self, markdown: List[str], response: Dict[str, Any]) -> None:
+        """Add action-specific formatted content to markdown"""
+        action = response.get('action', '')
+        
+        if action == 'list_files':
+            self._add_file_list_content(markdown, response)
+        elif action == 'search':
+            self._add_search_results_content(markdown, response)
+        elif action == 'read':
+            self._add_note_content(markdown, response)
+        elif action == 'summarize':
+            self._add_summary_content(markdown, response)
+        elif action == 'comment':
+            self._add_comment_content(markdown, response)
+        elif action == 'table':
+            self._add_table_content(markdown, response)
+    
+    def _add_file_list_content(self, markdown: List[str], response: Dict[str, Any]) -> None:
+        """Add formatted file list"""
+        files = response.get('files', [])
+        if not files:
+            return
+        
+        markdown.extend([
+            "### 📂 ファイル一覧",
+            ""
+        ])
+        
+        # Group files by directory
+        root_files = []
+        directory_files = {}
+        
+        for file_path in files:
+            if '/' in file_path:
+                directory = file_path.split('/')[0]
+                filename = '/'.join(file_path.split('/')[1:])
+                if directory not in directory_files:
+                    directory_files[directory] = []
+                directory_files[directory].append(filename)
+            else:
+                root_files.append(file_path)
+        
+        # Display root files
+        if root_files:
+            for file_path in sorted(root_files):
+                file_icon = "📄" if file_path.endswith('.md') else "📁"
+                safe_name = self.escape_markdown(file_path.replace('.md', ''))
+                markdown.append(f"- {file_icon} **{safe_name}**")
+        
+        # Display directory files
+        for directory in sorted(directory_files.keys()):
+            folder_icon = "📁"
+            safe_dir = self.escape_markdown(directory)
+            markdown.append(f"- {folder_icon} **{safe_dir}/**")
+            
+            for filename in sorted(directory_files[directory]):
+                file_icon = "📄" if filename.endswith('.md') else "📁"
+                safe_name = self.escape_markdown(filename.replace('.md', ''))
+                markdown.append(f"  - {file_icon} {safe_name}")
+        
+        markdown.append("")
+    
+    def _add_search_results_content(self, markdown: List[str], response: Dict[str, Any]) -> None:
+        """Add formatted search results"""
+        results = response.get('search_results', [])
+        if not results:
+            return
+        
+        markdown.extend([
+            f"### 🔍 検索結果 ({len(results)}件)",
+            ""
+        ])
+        
+        for i, result in enumerate(results[:10], 1):  # Show top 10
+            file_path = result.get('file', '')
+            matches = result.get('matches', [])
+            
+            safe_name = self.escape_markdown(file_path.replace('.md', ''))
+            markdown.append(f"**{i}. {safe_name}** ({len(matches)}件の一致)")
+            
+            # Show first match snippet
+            if matches:
+                first_match = matches[0]
+                line_content = first_match.get('line', '').strip()
+                if line_content:
+                    # Limit snippet length
+                    if len(line_content) > 100:
+                        line_content = line_content[:100] + '...'
+                    markdown.append(f"> {line_content}")
+            
+            markdown.append("")
+    
+    def _add_note_content(self, markdown: List[str], response: Dict[str, Any]) -> None:
+        """Add formatted note content"""
+        content = response.get('content', '')
+        note_path = response.get('note_path', '')
+        
+        if not content:
+            return
+        
+        # Extract filename
+        filename = note_path.split('/')[-1].replace('.md', '') if note_path else 'ノート'
+        safe_name = self.escape_markdown(filename)
+        
+        markdown.extend([
+            f"### 📄 {safe_name}",
+            "",
+            "---",
+            "",
+            content,
+            ""
+        ])
+    
+    def _add_summary_content(self, markdown: List[str], response: Dict[str, Any]) -> None:
+        """Add formatted summary content"""
+        summary = response.get('summary', '')
+        if not summary:
+            return
+        
+        markdown.extend([
+            "### 📝 要約",
+            "",
+            summary,
+            ""
+        ])
+    
+    def _add_comment_content(self, markdown: List[str], response: Dict[str, Any]) -> None:
+        """Add formatted AI comment"""
+        comment = response.get('comment', '')
+        if not comment:
+            return
+        
+        markdown.extend([
+            "### 🧠 AI解説",
+            "",
+            comment,
+            ""
+        ])
+    
+    def _add_table_content(self, markdown: List[str], response: Dict[str, Any]) -> None:
+        """Add formatted table extraction results"""
+        tables = response.get('tables', [])
+        count = response.get('count', 0)
+        open_path = response.get('open_path', '')
+        
+        # Add file info if available
+        if open_path:
+            filename = open_path.split('/')[-1].replace('.md', '')
+            safe_name = self.escape_markdown(filename)
+            markdown.extend([
+                f"### 📄 {safe_name}",
+                ""
+            ])
+        
+        # Add table results
+        if count == 0 or not tables:
+            markdown.extend([
+                "### 📊 テーブル抽出結果",
+                "",
+                "**テーブルが見つかりませんでした。**",
+                ""
+            ])
+        else:
+            markdown.extend([
+                f"### 📊 テーブル抽出結果 ({count}件)",
+                ""
+            ])
+            
+            for i, table in enumerate(tables, 1):
+                markdown.append(f"#### テーブル {i}")
+                markdown.append("")
+                
+                # Add table content (assuming it's already in markdown format)
+                if isinstance(table, str):
+                    markdown.append(table)
+                elif isinstance(table, dict):
+                    # Handle table dict format if needed
+                    table_content = table.get('content', str(table))
+                    markdown.append(table_content)
+                else:
+                    markdown.append(str(table))
+                
+                markdown.append("")
 
 
 class TablePresenter(BasePresenter):
